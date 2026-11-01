@@ -1,0 +1,26 @@
+# Only build inputs enter the context. Local settings, credentials, media,
+# screenshots, Git history, and prebuilt output stay on the host.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.server.json
+!vite.config.ts
+!index.html
+!src/
+!src/**
+!server/
+!server/**
+!shared/
+!shared/**
+!tests/
+!tests/*.test.ts
+!tests/fixtures/
+!tests/fixtures/motion.mp4
+**/.env*
+**/.npmrc
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/secrets/**

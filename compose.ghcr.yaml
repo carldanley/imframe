@@ -1,0 +1,17 @@
+services:
+  imframe:
+    image: ${IMFRAME_IMAGE:?Set IMFRAME_IMAGE in .env to your ghcr.io image and tag}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: 3000
+    volumes:
+      - frame-settings:/data
+
+volumes:
+  frame-settings:

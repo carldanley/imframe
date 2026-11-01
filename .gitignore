@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.env*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+data/
+coverage/
+*.log
+.DS_Store

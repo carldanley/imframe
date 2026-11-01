@@ -1,0 +1,26 @@
+{
+  "name": "imframe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "lint": "oxlint --deny-warnings src server shared scripts tests vite.config.ts",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:container": "node scripts/smoke-container.mjs",
+    "build": "npm run check && vite build && tsc -p tsconfig.server.json",
+    "start": "node --env-file-if-exists=.env build/server/server/index.js",
+    "demo": "node scripts/dev.mjs --demo"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "oxlint": "^1.90.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
