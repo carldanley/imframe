@@ -1,10 +1,10 @@
 [Unit]
-Description=Check for imframe updates every 15 minutes
+Description=Check Hub update requests every minute
 
 [Timer]
-OnBootSec=5min
-OnUnitInactiveSec=15min
-RandomizedDelaySec=30
+OnBootSec=30s
+OnUnitInactiveSec=60s
+RandomizedDelaySec=5
 Unit=imframe-update.service
 
 [Install]

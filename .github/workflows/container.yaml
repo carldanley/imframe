@@ -62,6 +62,8 @@ jobs:
         run: npm test
       - name: Check the optional Raspberry Pi browser installer
         run: python3 -c "import ast, pathlib; ast.parse(pathlib.Path('deploy/pi/install-browser.py').read_text())"
+      - name: Test Hub-controlled Pi updates
+        run: python3 scripts/pi-agent.test.py
       - name: Test Raspberry Pi provisioning and update recovery
         run: npm run test:pi
       - name: Test release versioning and update channels

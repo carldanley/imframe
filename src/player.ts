@@ -1,3 +1,6 @@
+import { newId } from '../shared/id.js';
+import { capturePreview } from './player-preview.js';
+import type { PlaybackCommand, PlaybackSnapshot } from '../shared/satellite.js';
 import { api } from './api.js';
 import { defaults, formatLocation, formatTakenDate, mediaUrl, type FrameSettings, type Library, type LocationCorner, type Media } from '../shared/model.js';
 import { Playlist } from '../shared/playlist.js';
@@ -273,13 +276,15 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
 }
 
 /** Actual ended/progress signals, with a stall watchdog rather than trusting EXIF duration. */
-async function playVideo(video: HTMLVideoElement, signal: AbortSignal, buffering: (active: boolean) => void) {
+async function playVideo(video: HTMLVideoElement, signal: AbortSignal, buffering: (active: boolean) => void, paused: () => boolean) {
   if (signal.aborted) return;
   const waiting = () => buffering(true);
   const playing = () => buffering(false);
   video.addEventListener('waiting', waiting);
   video.addEventListener('playing', playing);
   try {
+    while (paused() && !signal.aborted) await delay(100, signal);
+    if (signal.aborted) return;
     buffering(true);
     await Promise.race([
       video.play(),
@@ -290,7 +295,7 @@ async function playVideo(video: HTMLVideoElement, signal: AbortSignal, buffering
       let lastTime = video.currentTime;
       let progressedAt = performance.now();
       const watch = window.setInterval(() => {
-        if (video.currentTime > lastTime + 0.01) { lastTime = video.currentTime; progressedAt = performance.now(); }
+        if (paused() || video.currentTime > lastTime + 0.01) { lastTime = video.currentTime; progressedAt = performance.now(); }
         if (performance.now() - progressedAt > 20_000) finish(new Error('Video stopped making progress. Skipping it.'));
       }, 1000);
       function finish(error?: Error) {
@@ -359,6 +364,16 @@ export async function startPlayer(root: HTMLElement) {
   const prefetch = new MediaPrefetch((input, init) => fetch(input, init), () => report());
   prefetch.pause(true);
   let current: Slide | undefined;
+  const sessionId = newId();
+  let paused = false;
+  let phase: PlaybackSnapshot['phase'] = 'loading';
+  const history: string[] = [];
+  let rewinding = false;
+  let navigation: PlaybackCommand | undefined;
+  const handled = new Map<string, string | null | undefined>();
+  let reporting = false;
+  let previewing = false;
+  let lastPreview = 0;
   let pending: { id: string; updatedAt: string; ready: boolean; controller: AbortController; needed: AbortController; promise: Promise<Slide | undefined> } | undefined;
   let displayController = new AbortController();
   let stopped = false;
@@ -406,13 +421,61 @@ export async function startPlayer(root: HTMLElement) {
     }
   });
 
+  async function acknowledge(command: PlaybackCommand, error?: string) {
+    handled.set(command.id, error ?? null);
+    await api(`commands/${command.id}/ack`, { method: 'POST', body: JSON.stringify({ sessionId, error }) }).catch(() => {});
+  }
+  async function applyCommand(command: PlaybackCommand) {
+    if (Date.now() > command.expiresAt) return;
+    if (handled.has(command.id)) {
+      const result = handled.get(command.id);
+      if (result !== undefined) await acknowledge(command, result ?? undefined);
+      return;
+    }
+    handled.set(command.id, undefined);
+    if (handled.size > 100) handled.delete(handled.keys().next().value!);
+    if (command.action === 'pause' || command.action === 'resume') {
+      paused = command.action === 'pause';
+      clock.setPaused(paused, performance.now());
+      for (const animation of current?.element.getAnimations({ subtree: true }) ?? []) {
+        if (paused) animation.pause(); else animation.play();
+      }
+      if (paused) current?.video?.pause();
+      else if (['motion', 'video'].includes(phase) && !awaitingMedia) await current?.video?.play().catch(() => {});
+      await acknowledge(command);
+    } else {
+      if (!current) { await acknowledge(command, 'The frame is still loading. Try again shortly.'); return; }
+      if (command.action === 'previous') {
+        let id: string | undefined;
+        while (history.length && !id) { const candidate = history.pop()!; if (playlist.contains(candidate)) id = candidate; }
+        if (!id) { await acknowledge(command, 'There is no previous item yet.'); return; }
+        cancelPending();
+        playlist.putBack(current.media.id);
+        playlist.putBack(id);
+        rewinding = true;
+      }
+      navigation = command;
+      displayController.abort();
+      // Release any paused transition/dissolve so navigation can continue.
+      for (const animation of current.element.getAnimations({ subtree: true })) animation.finish();
+    }
+  }
+
   function report(error?: string) {
-    if (stopped) return;
     if (error) recentErrors = [...recentErrors.slice(-4), error];
+    if (stopped || reporting) return;
     const quality = current?.video?.getVideoPlaybackQuality();
     const upcoming = lookahead();
     const data = {
-      state: current ? 'playing' : 'waiting', frame: settings.name,
+      sessionId, kiosk,
+      playback: { asset: current?.media ?? null, phase, paused,
+        position: ['motion', 'video'].includes(phase) ? current?.video?.currentTime ?? 0 : clock.sample(performance.now())?.elapsed ?? 0,
+        duration: ['motion', 'video'].includes(phase) ? Number.isFinite(current?.video?.duration) ? current!.video!.duration : null : clock.sample(performance.now())?.duration ?? null,
+        viewport: { width: innerWidth, height: innerHeight }, fit: settings.fit, videoSource: settings.videoSource,
+        foregroundTransform: current ? getComputedStyle(current.element.querySelector('.slide-foreground')!).transform : 'none',
+        foregroundOrigin: current ? getComputedStyle(current.element.querySelector('.slide-foreground')!).transformOrigin : '50% 50%',
+      },
+      state: current ? paused ? 'paused' : 'playing' : 'waiting', frame: settings.name,
       media: current?.media.name ?? null, kind: current?.media.type ?? null,
       location: formatLocation(current?.media.location),
       sourcePixels: current ? `${current.width} × ${current.height}` : null,
@@ -431,7 +494,17 @@ export async function startPlayer(root: HTMLElement) {
         downloading: prefetch.loading, bytes: prefetch.bytes, limitBytes: settings.preloadMegabytes * 1024 * 1024,
       },
     };
-    void api('player', { method: 'POST', body: JSON.stringify(data) }).catch(() => {});
+    reporting = true;
+    void api<{ accepted: boolean; commands: PlaybackCommand[]; previewRequested?: boolean }>('player', { method: 'POST', body: JSON.stringify(data), signal: AbortSignal.timeout(4000) })
+      .then(receipt => {
+        for (const entry of receipt.commands) void applyCommand(entry);
+        if (receipt.accepted && receipt.previewRequested && current && !previewing && Date.now() - lastPreview > 1500) {
+          previewing = true; lastPreview = Date.now();
+          void capturePreview(current.element, current.image, current.video).then(blob => blob && fetch(`/api/preview?session=${sessionId}`, {
+            method: 'POST', body: blob, signal: AbortSignal.timeout(4000),
+          })).catch(() => {}).finally(() => { previewing = false; });
+        }
+      }).catch(() => {}).finally(() => { reporting = false; });
   }
 
   function cancelPending() {
@@ -527,6 +600,8 @@ export async function startPlayer(root: HTMLElement) {
     const previous = current;
     next.media = playlist.get(next.media.id) ?? next.media;
     updateOverlays(next, settings);
+    if (previous && !rewinding) { history.push(previous.media.id); if (history.length > 100) history.shift(); }
+    rewinding = false;
     current = next;
     next.element.removeAttribute('aria-hidden');
     previous?.element.setAttribute('aria-hidden', 'true');
@@ -541,11 +616,15 @@ export async function startPlayer(root: HTMLElement) {
     previous?.dispose();
     next.element.style.zIndex = '1';
     message.hidden = true;
+    if (navigation) { void acknowledge(navigation); navigation = undefined; }
   }
 
+  const events = new EventSource('/api/events');
+  events.addEventListener('message', event => { if (event.data === 'settings' || event.data === 'ready') void refresh(); });
+  const heartbeat = window.setInterval(() => report(), 1000);
   const interval = window.setInterval(() => { void refresh(); }, 5000);
   window.addEventListener('pagehide', () => {
-    stopped = true; clearInterval(interval); clearTimeout(controlsTimer);
+    stopped = true; events.close(); clearInterval(heartbeat); clearInterval(interval); clearTimeout(controlsTimer);
     cancelAnimationFrame(indicatorFrame);
     document.removeEventListener('fullscreenchange', fullscreenChanged);
     fullscreenDisplay.removeEventListener('change', fullscreenChanged);
@@ -580,6 +659,7 @@ export async function startPlayer(root: HTMLElement) {
     }
     displayController = new AbortController();
     clock.clear();
+    phase = slide.video ? slide.image ? 'motion' : 'video' : 'photo';
     awaitingMedia = false;
     await transition(slide);
     if (stopped || current !== slide) continue;
@@ -597,13 +677,14 @@ export async function startPlayer(root: HTMLElement) {
           await playVideo(slide.video, displayController.signal, active => {
             videoBuffering = active;
             prefetch.pause(active || awaitingMedia);
-          });
+          }, () => paused);
         }
         catch (error) { report((error as Error).message); }
         if (slide.image && !displayController.signal.aborted) {
           await dissolveToStill(slide, 650, displayController.signal);
           if (!displayController.signal.aborted) {
             // The full photo interval starts only once the sharp still is fully visible.
+            phase = 'still';
             stillSeconds = clock.holdStill(performance.now());
             report();
           }
@@ -611,7 +692,8 @@ export async function startPlayer(root: HTMLElement) {
       }
       if (slide.image && stillSeconds > 0 && !displayController.signal.aborted) {
         slide.startMotion?.(stillSeconds);
-        await delay(stillSeconds * 1000, displayController.signal);
+        if (paused) for (const animation of slide.element.getAnimations({ subtree: true })) animation.pause();
+        while (!displayController.signal.aborted && (clock.sample(performance.now())?.fraction ?? 0) < 1) await delay(100, displayController.signal);
       }
     } catch { /* Next, a settings change, or navigation cancelled the current wait. */ }
     slide.video?.pause();

@@ -2,6 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PlaybackClock } from '../shared/playback-clock.js';
 
+test('pause freezes a photo countdown and resume excludes the paused interval', () => {
+  const clock = new PlaybackClock();
+  clock.startPhoto(12, 1000);
+  clock.setPaused(true, 4000);
+  assert.equal(clock.sample(20_000)!.elapsed, 3);
+  clock.setPaused(false, 30_000);
+  assert.equal(clock.sample(31_000)!.elapsed, 4);
+  clock.setPaused(true, 32_000);
+  clock.clear(); clock.startPhoto(12, 33_000);
+  assert.equal(clock.sample(40_000)!.elapsed, 0, 'next while paused starts a frozen new interval');
+  clock.setPaused(false, 42_000);
+  assert.equal(clock.sample(43_000)!.elapsed, 1);
+  clock.startLivePhoto(12); clock.setPaused(true, 44_000); clock.holdStill(45_000);
+  assert.equal(clock.sample(50_000)!.elapsed, 0);
+});
+
 test('photo countdown counts down in whole seconds and reaches completion without going negative', () => {
   const clock = new PlaybackClock();
   clock.startPhoto(10, 1000);

@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: imframe-hub
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imframe-hub
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: imframe-hub
+  template:
+    metadata:
+      labels:
+        app: imframe-hub
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: hub
+          image: ghcr.io/carldanley/imframe:0.2.0
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: IMFRAME_MODE
+              value: hub
+            - name: DATA_DIR
+              value: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet:
+              path: /api/settings
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /api/settings
+              port: http
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: settings
+              mountPath: /data
+      volumes:
+        - name: settings
+          persistentVolumeClaim:
+            claimName: imframe-hub
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: imframe-hub
+spec:
+  selector:
+    app: imframe-hub
+  ports:
+    - port: 3000
+      targetPort: http

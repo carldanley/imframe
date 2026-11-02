@@ -13,10 +13,20 @@ type ClockState = { kind: 'idle' }
 /** A Live Photo's countdown waits until its motion and dissolve have finished. */
 export class PlaybackClock {
   private state: ClockState = { kind: 'idle' };
+  private pausedAt: number | null = null;
+
+  setPaused(paused: boolean, now: number) {
+    if (paused && this.pausedAt === null) this.pausedAt = now;
+    else if (!paused && this.pausedAt !== null) {
+      if (this.state.kind === 'photo') this.state.startedAt += now - this.pausedAt;
+      this.pausedAt = null;
+    }
+  }
 
   clear() { this.state = { kind: 'idle' }; }
   startPhoto(seconds: number, now: number) {
     this.state = { kind: 'photo', duration: seconds, startedAt: now };
+    if (this.pausedAt !== null) this.pausedAt = now;
   }
   startVideo() { this.state = { kind: 'video' }; }
   startLivePhoto(stillSeconds: number) { this.state = { kind: 'live-photo', stillSeconds }; }
@@ -31,7 +41,7 @@ export class PlaybackClock {
   sample(now: number, video?: { currentTime: number; duration: number }): PlaybackProgress | null {
     if (this.state.kind === 'idle' || this.state.kind === 'live-photo') return null;
     const elapsed = this.state.kind === 'photo'
-      ? Math.max(0, now - this.state.startedAt) / 1000
+      ? Math.max(0, (this.pausedAt ?? now) - this.state.startedAt) / 1000
       : Math.max(0, Number.isFinite(video?.currentTime) ? video!.currentTime : 0);
     const duration = this.state.kind === 'photo' ? this.state.duration
       : Number.isFinite(video?.duration) && video!.duration > 0 ? video!.duration : null;

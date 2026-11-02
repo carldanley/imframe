@@ -1,88 +1,84 @@
-# imframe
+<p align="center"><img src="public/hub-icon.png" width="100" alt="imframe icon" /></p>
+<h1 align="center">imframe</h1>
+<p align="center">Your Immich albums, on your photo frames.</p>
 
-Turn your Immich albums into a photo frame.
+Connect a Raspberry Pi to a monitor and let your photos play. Use **Hub** on your phone to manage all your frames in one place. Add new photos in Immich; they appear on the frames automatically.
 
-Run imframe on a Raspberry Pi connected to a monitor, choose albums from your phone, and let it play. Keep adding photos in Immich—the frame picks up changes automatically. Each frame has its own albums and settings.
+## What it does
 
-## Features
-
-### Your albums, your order
-
-- Select multiple albums and mix them together or play one album at a time.
-- Play oldest first, newest first, or shuffle without repeats within a cycle.
-- Reorder albums or shuffle their order independently.
-- Media shared between selected albums plays once per cycle.
-- New photos and videos appear automatically, with an adjustable refresh interval.
-
-### Photos, videos, and Live Photos
-
-- Display full-size photos, with support for 4K screens.
-- Play videos silently through to the end.
-- Play a Live Photo's motion, fade into its still, then start the photo timer. Motion can also be turned off.
-- Download up to five upcoming items early, with a configurable cache limit.
-- Keep filenames and controls off the picture in kiosk mode.
-- With the Pi installer, start the frame at boot and check for container updates automatically.
-
-### Make each frame your own
-
-| Setting | Options |
+| | Features |
 | --- | --- |
-| Photo duration | 3 seconds to 5 minutes |
-| Image fit | Show the whole image with a blurred background, or fill the screen and crop the edges |
-| Motion | Still, slow zoom in, slow zoom out, or random pan and zoom |
-| Zoom amount | 1–20% |
-| Transitions | Crossfade, slide, instant, or random, with adjustable timing |
-| Location | Map pin and city, region, and country in any corner |
-| Date taken | Calendar icon and date in `MM.DD.YY` format, in any corner |
-| Countdown | A progress bar along any edge, or a circular countdown in any corner |
-| Video source | Original file or Immich's playback version for compatibility |
-| Preloading | 1–5 upcoming items; a temporary download cache from 128 MB to 1 GB |
+| **Your Frames** | Add frames by address, see what is playing, and use Previous, Pause, and Next. Hub reads each frame’s existing name. |
+| **Albums** | Pick several albums. Mix them together or play one at a time. Shuffle, play oldest first, or play newest first. |
+| **Media** | Full-size photos, videos, and Live Photos. Live Photo motion fades into the still before the photo timer starts. |
+| **Style** | Pan and zoom, adjustable transitions, blurred backgrounds, and optional location, date, and countdown displays. |
+| **Everyday use** | Start fullscreen when the Pi boots. Preload upcoming media. Change settings without restarting playback. |
 
-Location, date, and countdown displays are optional. Photos and videos both get a blurred background when they don't fill the screen.
+Hub has a simple **Albums / Style / Advanced** layout. Each frame also keeps its own settings page and works when Hub is offline. Previews are small snapshots from the running player, refreshed about every two seconds.
 
-## Get started with Docker
+## Set it up
 
-Images are available for Linux AMD64 and ARM64, including 64-bit Raspberry Pi OS.
+You need an Immich server and one Raspberry Pi with a monitor per frame. The Pi installer supports **Raspberry Pi OS 64-bit Desktop (Trixie)**. Run Hub once on a computer or server that can reach your frames.
 
-1. Save [compose.ghcr.yaml](compose.ghcr.yaml) and [.env.example](.env.example) in a new folder. Copy `.env.example` to `.env`.
-2. In Immich, create an API key with `album.read`, `asset.read`, `asset.view`, and `asset.download` permissions.
-3. Set these values in `.env`:
+### 1. Set up each frame
 
-```dotenv
-IMMICH_URL=http://immich.local:2283
-IMMICH_API_KEY=your-api-key
-IMFRAME_IMAGE=ghcr.io/carldanley/imframe:latest
-```
-
-Start the frame:
+Clone this repository on your computer and copy `.env.example` to `.env`. Add your Immich URL and API key. The key needs `album.read`, `asset.read`, `asset.view`, and `asset.download` permissions.
 
 ```sh
-docker compose -f compose.ghcr.yaml pull
-docker compose -f compose.ghcr.yaml up -d
+bash deploy/pi/provision.sh \
+  --host frame.local --user YOUR_PI_USERNAME \
+  --env-file .env --browser hevc --reboot
 ```
 
-Open `http://<frame-address>:3000` on your phone to choose albums and save settings. Open `http://localhost:3000/frame?kiosk=1` in Chromium on the frame itself.
+Use your Pi’s hostname or IP address and username. Repeat for each frame. The script installs the app and starts Chromium fullscreen at boot. The `hevc` browser option supports original iPhone videos and Live Photos on Pi 5; see the [Pi setup guide](docs/setup.md#original-hevc-video-on-pi-5).
 
-Settings stay on that frame and survive container updates. The API key stays in the backend. imframe is intended for a trusted home network; it has no login page and needs access to Immich to load media.
+**HEIC or RAW photos?** Enable Immich’s full-size image generation first. [Image setup](docs/setup.md#heic-and-raw-photos).
 
-Use `latest` to follow stable releases, a minor tag such as `0.1` for patch updates, or a full version such as `0.1.0` to stay on one release. See [update options](docs/setup.md#automatic-updates) for details.
+### 2. Start Hub
 
-**Using HEIC or RAW photos?** Enable full-size image generation in Immich first. See the [setup guide](docs/setup.md#heic-and-raw-photos).
+On the computer or server hosting Hub, save [compose.hub.yaml](compose.hub.yaml) and run:
 
-## Try it without your photos
+```sh
+docker compose -f compose.hub.yaml up -d
+```
 
-With Node.js 24 or newer, run these commands from a checkout of this repository:
+Open `http://<hub-address>:3002`. Hub needs no Immich API key; each frame keeps its own connection. [More deployment options](docs/hub.md), including Kubernetes and existing Pi upgrades.
+
+### 3. Add your frames
+
+1. In Hub, choose **Add Frame** and enter the Pi’s address, such as `frame.local:3000`.
+2. Confirm the name Hub finds, then choose **Add Frame**.
+3. Tap **Customize** to choose albums and adjust how they look.
+
+Changes save automatically. Keep managing your photos and albums in Immich. On iPhone, use Safari’s **Share → Add to Home Screen** to give Hub its own icon.
+
+## Updates
+
+Choose **When I ask** or **Automatically, once a day** in Hub settings. Automatic updates run one frame at a time. Frames outside Hub check for updates themselves every 15 minutes.
+
+The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.2` for the `0.2.x` series, or `:0.2.0` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
+
+## Try it locally
+
+With Node.js 24 or newer, open two terminals in this checkout:
 
 ```sh
 npm ci
 npm run demo
 ```
 
-Open [localhost:5173](http://localhost:5173). Demo mode uses generated sample images, a test video, and a sample Live Photo. It doesn't connect to your Immich library and keeps its settings separate.
+```sh
+npm run dev:hub
+```
+
+Open the [demo player](http://localhost:5173/frame?kiosk=1), then [Hub](http://localhost:5174) and add `localhost:3000`. The demo uses generated sample media and separate frame settings.
 
 ## Guides
 
-- [Frame setup](docs/setup.md): Immich image settings, picture quality, Raspberry Pi fullscreen startup, and updates.
-- [Development](docs/development.md): run locally, check changes, and publish containers through GitHub Actions.
+- [Frame setup](docs/setup.md) — Immich, picture quality, Docker, and Raspberry Pi setup.
+- [Hub setup](docs/hub.md) — connecting frames, updates, and hosting.
+- [Development](docs/development.md) — local testing, CI, and releases.
+
+imframe is for a trusted home network and has no login page. Immich must be reachable to load new media; there is no persistent offline library.
 
 Inspired by [ImmichFrame](https://github.com/immichFrame/ImmichFrame).

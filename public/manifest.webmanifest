@@ -1,0 +1,10 @@
+{
+  "name": "Hub · imframe",
+  "short_name": "Hub",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f4ee",
+  "theme_color": "#f5f4ee",
+  "icons": [{ "src": "/hub-icon.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any maskable" }]
+}

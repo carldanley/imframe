@@ -19,19 +19,28 @@ Open [localhost:5173](http://localhost:5173) in Chrome. `/` is the settings page
 
 To use generated sample media instead, stop the normal development server and run `npm run demo`. Demo settings are stored separately in `data/demo/`.
 
+## Develop Hub against a local satellite
+
+Run `npm run demo` (or `npm run dev` with Immich), then run `npm run dev:hub` in another terminal. Hub uses API port 3002, browser port 5174, and `data/hub/`; the satellite uses API port 3000 and browser port 5173. Open `/frame?kiosk=1` on port 5173 so there is a running player, then add `localhost:3000` in Hub.
+
+Both use hot reload. Set `HUB_PORT`, `HUB_VITE_PORT`, or `HUB_DATA_DIR` to isolate another Hub. A Hub’s addresses must be reachable from its backend. A local Docker Hub uses `host.docker.internal:3000` to reach a host satellite on macOS.
+
+Test locally with generated media first, then run the container smoke test. Finally, verify settings, previews, transport controls, Live Photos, and normal playback on a Pi before rolling out further.
+
 ## Check changes
 
 ```sh
 npm run lint
 npm test
 npm run test:pi
+python3 scripts/pi-agent.test.py
 npm run test:release
 npm run release:check
 npm run build
 npm audit --audit-level=low
 ```
 
-The build includes strict TypeScript checks. Tests cover album ordering, library updates, settings, date formatting, Live Photo timing, video cropping, the Immich proxy, and bounded preloading with cancellation and streaming fallback. Pi tests check credential transfer and cleanup, SSH argument validation, failed installations, unchanged images, failed downloads, and container rollback. Check codecs, motion, and transitions on the intended display too.
+The build includes strict TypeScript checks. Tests cover satellite identity, player ownership, acknowledged commands, offline settings reconciliation, remote media ranges, update requests, album ordering, library updates, settings, date formatting, Live Photo timing, video cropping, the Immich proxy, and bounded preloading with cancellation and streaming fallback. Pi tests check credential transfer and cleanup, SSH argument validation, failed installations, unchanged images, failed downloads, and container rollback. Check codecs, motion, and transitions on the intended display too.
 
 To run the production build locally:
 
@@ -119,3 +128,11 @@ Use the actual version produced by the bump command. The initial `0.1.0` release
 `.env`, `data/`, dependencies, and generated builds are ignored by Git. `.dockerignore` includes only the inputs needed to build the app. The tracked video fixture is a generated test pattern.
 
 Use generated demo media for screenshots unless the owner has approved the exact personal photos shown.
+
+## Hub and satellite APIs
+
+`GET /api/app` identifies the runtime mode. Satellite endpoints retain the original settings, albums, library, and media API. `GET /api/satellite` adds persistent identity, version, settings, playback state, and updater status. `GET /api/events` notifies players of settings changes; polling remains a fallback.
+
+Players send one-second heartbeats with a session ID. An active kiosk owns remote control; another browser cannot replace its report. Commands carry an idempotency key and a deadline. A command only succeeds once the player acknowledges it. Photo clocks and motion pause together, and Live Photo still timers retain their full duration.
+
+Hub stores satellite addresses, identities, and pending settings patches in its own volume. It proxies requests server-side; API keys never reach the Hub browser. Preview JPEGs are captured in the player on demand and kept in satellite memory. The host updater polls a fixed local endpoint and invokes only the installed update script; it cannot run commands supplied by Hub.

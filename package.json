@@ -1,6 +1,6 @@
 {
   "name": "imframe",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -18,7 +18,8 @@
     "release:check": "node scripts/release.mjs",
     "build": "npm run check && vite build && tsc -p tsconfig.server.json",
     "start": "node --env-file-if-exists=.env build/server/server/index.js",
-    "demo": "node scripts/dev.mjs --demo"
+    "demo": "node scripts/dev.mjs --demo",
+    "dev:hub": "node scripts/dev-hub.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

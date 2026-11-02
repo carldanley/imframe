@@ -104,6 +104,7 @@ fi
 
 install -d -m 0755 /usr/local/libexec/imframe
 install -m 0755 "$source_dir/update.sh" /usr/local/libexec/imframe/
+install -m 0755 "$source_dir/agent.py" /usr/local/libexec/imframe/
 install -m 0644 "$source_dir/imframe-update.service" "$source_dir/imframe-update.timer" /etc/systemd/system/
 install -m 0644 "$repo_dir/compose.ghcr.yaml" /opt/imframe/compose.yaml
 chmod 0600 /opt/imframe/.env

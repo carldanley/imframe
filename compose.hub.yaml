@@ -1,0 +1,16 @@
+services:
+  hub:
+    image: ${IMFRAME_IMAGE:-ghcr.io/carldanley/imframe:latest}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${HUB_PORT:-3002}:3000"
+    environment:
+      IMFRAME_MODE: hub
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: "3000"
+    volumes:
+      - hub-settings:/data
+volumes:
+  hub-settings:

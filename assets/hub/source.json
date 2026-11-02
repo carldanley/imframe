@@ -1,0 +1,11 @@
+{
+  "name": "Framed gallery",
+  "selectedConcept": "A",
+  "selectedOn": "2026-11-02",
+  "generator": "Built-in image generation tool",
+  "reference": "approved-concept.png",
+  "master": "../../public/hub-icon.png",
+  "web": "../../public/hub-icon.webp",
+  "description": "Two overlapping ivory picture frames on forest green, with a sage landscape and ivory sun.",
+  "prompt": "Use case: precise-object-edit.\nInput image: approved edit target, \"A · Framed gallery\". The user has selected this exact design for the Hub app.\nPrepare the final standalone app icon from the LARGE top icon in the supplied sheet. Preserve the two overlapping ivory picture frames, their exact relative positions, slight counterclockwise tilt, broad bevels, miter joints, inset cream mat, softly recessed dark-green picture with one sage hill and one ivory sun, and the warm lighting and depth. Do not redesign the mark, change its palette, or simplify its physical picture-frame appearance.\nRemove the presentation sheet, title, text labels, and the two small examples. Output ONLY one square app-icon image. Expand the forest-green tile background to fill the entire square edge to edge, including all four corners; no pre-rounded mask, no cream surround, no outside shadow, no transparent margins. Keep the approved foreground design centered with generous icon-safe padding, matching the proportions of the large approved tile. Crisp high-resolution master, approximately 1024 × 1024. No text, letters, extra decorations, or watermark.\nThis is final project artwork, not another concept or comparison sheet."
+}

@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-Start with the [Docker setup](../README.md#get-started-with-docker). The sections below cover image formats, the Pi's display, and updates.
+Start with the [quick setup](../README.md#set-it-up). The sections below cover image formats, the Pi's display, and updates.
 
 ## Immich connection
 
@@ -128,17 +128,17 @@ Before leaving a frame running, check portrait and landscape photos, Live Photos
 
 ## Automatic updates
 
-The Pi installer enables a systemd timer that checks GHCR five minutes after boot, then every 15 minutes, with up to 30 seconds of extra delay. Choose which releases it follows with `IMFRAME_IMAGE` in `/opt/imframe/.env`:
+The Pi installer enables an agent that checks for Hub requests about once a minute, starting 30 seconds after boot. Standalone frames check GHCR every 15 minutes. Enrolled frames wait for Hub to request updates; choose manual or daily automatic updates in Hub. Choose which releases it follows with `IMFRAME_IMAGE` in `/opt/imframe/.env`:
 
 | Image tag | Update behavior |
 | --- | --- |
 | `:latest` | Follow the newest stable release, including new major versions |
-| `:0.1` | Follow patch releases in the `0.1.x` series |
+| `:0.2` | Follow patch releases in the `0.2.x` series |
 | `:1` | Follow stable releases in major version 1 (available from 1.0 onward) |
-| `:0.1.0` | Stay on that specific release until you change the tag |
+| `:0.2.0` | Stay on that specific release until you change the tag |
 | `:0.2.0-rc.1` | Test that specific prerelease |
 
-These are examples; each tag becomes available after its release is published. For example, `IMFRAME_IMAGE=ghcr.io/carldanley/imframe:0.1` keeps a frame on `0.1.x` while still receiving patch updates. New installs default to `latest`. The same tags work with the provisioner's `--image` option.
+These are examples; each tag becomes available after its release is published. For example, `IMFRAME_IMAGE=ghcr.io/carldanley/imframe:0.2` keeps a frame on `0.2.x` while still receiving patch updates. New installs default to `latest`. The same tags work with the provisioner's `--image` option.
 
 - Downloads happen while the current frame keeps playing.
 - An unchanged image leaves playback running.
@@ -151,7 +151,7 @@ Push a stable `vX.Y.Z` Git tag to publish a release; see [Version a release](dev
 To check for an update now, inspect the schedule, or read the last update's log:
 
 ```sh
-sudo systemctl start imframe-update.service
+sudo /usr/local/libexec/imframe/update.sh
 systemctl list-timers imframe-update.timer
 sudo journalctl -u imframe-update.service -n 50 --no-pager
 ```
@@ -175,6 +175,22 @@ Use `:latest` for the newest stable release. To keep a particular build, set `IM
 
 Settings live in the `frame-settings` Docker volume (`imframe_frame-settings` when using the Pi installer). Keep the same Compose project/directory name to reuse it. Keep `.env` locally; it is excluded from Git and the Docker build. When moving an existing installation to the Pi installer, preserve its settings before switching Compose projects.
 
-Each Pi runs its own copy of imframe. Open `http://<pi-address>:3000` to configure that frame. Saved settings reach an open player within about five seconds; album contents refresh every 60 seconds by default. Photo duration and motion changes take effect on the next item.
+Each Pi runs its own copy of imframe. Manage all of them through [Hub](hub.md), or open `http://<pi-address>:3000` to configure that frame. Saved settings notify an open player immediately, with a five-second polling fallback; album contents refresh every 60 seconds by default. Photo duration and motion changes take effect on the next item.
 
 There is no offline media library. During a temporary outage, the current picture stays visible while the app retries. Immich must be reachable to load new media after a restart.
+
+## Run a frame with Docker only
+
+Copy `.env.example` to `.env` and configure your Immich URL, key, and image:
+
+```dotenv
+IMMICH_URL=http://immich.local:2283
+IMMICH_API_KEY=your-api-key
+IMFRAME_IMAGE=ghcr.io/carldanley/imframe:latest
+```
+
+```sh
+docker compose -f compose.ghcr.yaml up -d
+```
+
+Open `http://<frame-address>:3000` to select albums, then open `/frame?kiosk=1` on the display. This runs the satellite app; the Pi installer additionally sets up Chromium and boot startup.

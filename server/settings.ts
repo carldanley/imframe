@@ -14,9 +14,10 @@ export class SettingsStore {
     }
   }
   get() { return structuredClone(this.current); }
-  async save(input: unknown) {
-    const next = parseSettings(input);
+  async save(input: unknown, partial = false) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Settings must be an object.');
     const write = this.writes.then(async () => {
+      const next = parseSettings(partial ? { ...this.current, ...(input as Record<string, unknown>) } : input);
       await mkdir(this.directory, { recursive: true });
       const target = join(this.directory, 'settings.json');
       await writeFile(`${target}.tmp`, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });

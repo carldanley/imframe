@@ -7,6 +7,8 @@
 !tsconfig.server.json
 !vite.config.ts
 !index.html
+!public/
+!public/**
 !src/
 !src/**
 !server/

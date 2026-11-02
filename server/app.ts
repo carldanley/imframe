@@ -1,29 +1,13 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { stat } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
-import { extname, resolve, sep } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { createServer } from 'node:http';
 import { isId, type Library, type Status } from '../shared/model.js';
 import { HttpError, ImmichClient } from './immich.js';
 import { SettingsStore } from './settings.js';
+import { SatelliteRuntime } from './satellite.js';
+import { json, readJson, serveStatic, failure, stream } from './http.js';
 
-function json(response: ServerResponse, status: number, body: unknown) {
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-  response.end(JSON.stringify(body));
-}
-
-async function readJson(request: IncomingMessage): Promise<unknown> {
-  let body = '';
-  for await (const chunk of request) {
-    body += String(chunk);
-    if (body.length > 32_768) throw new HttpError(413, 'Request is too large.');
-  }
-  try { return JSON.parse(body); } catch { throw new HttpError(400, 'Invalid JSON.'); }
-}
-
-export function createApp(options: { immich: ImmichClient; settings: SettingsStore; staticDir?: string; demo?: boolean }) {
+export function createApp(options: { immich: ImmichClient; settings: SettingsStore; staticDir?: string; demo?: boolean; satellite?: SatelliteRuntime }) {
   const { immich, settings } = options;
+  const satellite = options.satellite ?? new SatelliteRuntime();
   let libraryCache: { signature: string; expires: number; data: Library } | undefined;
   let libraryPending: { signature: string; promise: Promise<Library> } | undefined;
   let playerReport: Record<string, unknown> | null = null;
@@ -55,6 +39,35 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
   return createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://frame.local');
     try {
+      if (url.pathname === '/api/preview') {
+        if (request.method === 'GET') {
+          const image = satellite.getPreview();
+          if (!image) { response.writeHead(204, { 'Cache-Control': 'no-store' }); response.end(); return; }
+          response.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store', 'Content-Length': image.bytes.length, 'X-Imframe-Preview-At': String(image.capturedAt) });
+          response.end(image.bytes); return;
+        }
+        if (request.method === 'POST') {
+          const chunks: Buffer[] = []; let size = 0;
+          for await (const chunk of request) {
+            size += chunk.length;
+            if (size > 512_000) throw new HttpError(413, 'Preview is too large.');
+            chunks.push(Buffer.from(chunk));
+          }
+          const image = Buffer.concat(chunks);
+          if (image[0] !== 0xff || image[1] !== 0xd8) throw new HttpError(400, 'Expected a JPEG preview.');
+          satellite.setPreview(url.searchParams.get('session'), image);
+          return json(response, 200, { ok: true });
+        }
+      }
+      if (url.pathname === '/api/app') return json(response, 200, { mode: 'satellite', version: satellite.version });
+      if (url.pathname === '/api/satellite' && request.method === 'GET') return json(response, 200, satellite.info(settings.get()));
+      if (url.pathname === '/api/events' && request.method === 'GET') return satellite.subscribe(response);
+      if (url.pathname === '/api/commands' && request.method === 'POST') return json(response, 200, await satellite.command(await readJson(request)));
+      const ack = url.pathname.match(/^\/api\/commands\/([^/]+)\/ack$/);
+      if (ack && request.method === 'POST') { satellite.acknowledge(ack[1]!, await readJson(request)); return json(response, 200, { ok: true }); }
+      if (url.pathname === '/api/management' && request.method === 'PUT') return json(response, 200, await satellite.manage(await readJson(request)));
+      if (url.pathname === '/api/update' && request.method === 'POST') return json(response, 202, await satellite.requestUpdate());
+      if (url.pathname === '/api/update-agent' && request.method === 'POST') return json(response, 200, await satellite.agent(await readJson(request)));
       if (url.pathname === '/api/status' && request.method === 'GET') {
         const status: Status = { configured: immich.configured, connected: false, serverUrl: immich.base.href.replace(/\/api\/$/, ''), version: null, error: null, demo: options.demo ?? false };
         try {
@@ -66,15 +79,16 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
       }
       if (url.pathname === '/api/settings') {
         if (request.method === 'GET') return json(response, 200, settings.get());
-        if (request.method === 'PUT') {
+        if (request.method === 'PUT' || request.method === 'PATCH') {
           let saved;
-          try { saved = await settings.save(await readJson(request)); }
+          try { saved = await settings.save(await readJson(request), request.method === 'PATCH'); }
           catch (error) {
             if (error instanceof HttpError) throw error;
             if ((error as NodeJS.ErrnoException).code) throw error;
             throw new HttpError(400, (error as Error).message);
           }
           libraryCache = undefined;
+          satellite.settingsChanged();
           return json(response, 200, saved);
         }
       }
@@ -85,8 +99,9 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
         if (request.method === 'POST') {
           const report = await readJson(request);
           if (!report || typeof report !== 'object' || Array.isArray(report)) throw new HttpError(400, 'Invalid player report.');
-          playerReport = { ...report, reportedAt: new Date().toISOString() };
-          return json(response, 200, { ok: true });
+          const receipt = 'sessionId' in report ? satellite.report(report) : { accepted: !satellite.online, commands: [] };
+          if (receipt.accepted) playerReport = { ...report, reportedAt: new Date().toISOString() };
+          return json(response, 200, receipt);
         }
       }
       const media = url.pathname.match(/^\/api\/media\/([^/]+)\/(photo|thumbnail|video|original)$/);
@@ -100,35 +115,10 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
         let upstream: Response;
         try { upstream = await immich.media(id, kind as 'photo' | 'thumbnail' | 'video' | 'original', request.headers.range, controller.signal); }
         finally { clearTimeout(timer); }
-        const headers: Record<string, string> = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
-        for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
-          const value = upstream.headers.get(name);
-          if (value) headers[name] = value;
-        }
-        response.writeHead(upstream.status, headers);
-        if (request.method === 'HEAD' || !upstream.body) { await upstream.body?.cancel(); response.end(); return; }
-        await pipeline(Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]), response);
+        await stream(upstream, response, request.method === 'HEAD');
         return;
       }
-      if (url.pathname.startsWith('/api/')) throw new HttpError(404, 'API endpoint not found.');
-      if (request.method !== 'GET' && request.method !== 'HEAD') throw new HttpError(405, 'Method not allowed.');
-      if (!options.staticDir) throw new HttpError(404, 'Use the Vite development URL on port 5173.');
-      const root = resolve(options.staticDir);
-      const file = resolve(root, `.${decodeURIComponent(url.pathname)}`);
-      if (file !== root && !file.startsWith(root + sep)) throw new HttpError(404, 'Not found.');
-      const isPage = ['/', '/frame', '/frame/'].includes(url.pathname);
-      const target = isPage ? resolve(root, 'index.html') : file;
-      const info = await stat(target).catch(() => null);
-      if (!info?.isFile()) throw new HttpError(404, 'Not found.');
-      const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
-      response.writeHead(200, { 'Content-Type': mime[extname(target)] ?? 'application/octet-stream', 'Cache-Control': isPage ? 'no-cache' : 'public, max-age=31536000, immutable' });
-      if (request.method === 'HEAD') { response.end(); return; }
-      await pipeline(createReadStream(target), response);
-    } catch (error) {
-      if (response.headersSent) { response.destroy(); return; }
-      const status = error instanceof HttpError ? error.status : 502;
-      const message = error instanceof HttpError ? error.message : 'The frame could not complete this request. Check that Immich is reachable and try again.';
-      json(response, status, { error: message });
-    }
+      await serveStatic(url, request, response, options.staticDir);
+    } catch (error) { failure(response, error); }
   });
 }
