@@ -56,7 +56,7 @@ Changes save automatically. Keep managing your photos and albums in Immich. On i
 
 Choose **When I ask** or **Automatically, once a day** in Hub settings. Automatic updates run one frame at a time. Frames outside Hub check for updates themselves every 15 minutes.
 
-The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.2` for the `0.2.x` series, or `:0.2.0` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
+The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.2` for the `0.2.x` series, or `:0.2.1` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
 
 ## Try it locally
 

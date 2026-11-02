@@ -135,7 +135,7 @@ The Pi installer enables an agent that checks for Hub requests about once a minu
 | `:latest` | Follow the newest stable release, including new major versions |
 | `:0.2` | Follow patch releases in the `0.2.x` series |
 | `:1` | Follow stable releases in major version 1 (available from 1.0 onward) |
-| `:0.2.0` | Stay on that specific release until you change the tag |
+| `:0.2.1` | Stay on that specific release until you change the tag |
 | `:0.2.0-rc.1` | Test that specific prerelease |
 
 These are examples; each tag becomes available after its release is published. For example, `IMFRAME_IMAGE=ghcr.io/carldanley/imframe:0.2` keeps a frame on `0.2.x` while still receiving patch updates. New installs default to `latest`. The same tags work with the provisioner's `--image` option.

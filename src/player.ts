@@ -597,6 +597,7 @@ export async function startPlayer(root: HTMLElement) {
   }
 
   async function transition(next: Slide) {
+    const navigationAtStart = navigation;
     const previous = current;
     next.media = playlist.get(next.media.id) ?? next.media;
     updateOverlays(next, settings);
@@ -616,7 +617,7 @@ export async function startPlayer(root: HTMLElement) {
     previous?.dispose();
     next.element.style.zIndex = '1';
     message.hidden = true;
-    if (navigation) { void acknowledge(navigation); navigation = undefined; }
+    if (navigationAtStart && navigation === navigationAtStart) { void acknowledge(navigationAtStart); navigation = undefined; }
   }
 
   const events = new EventSource('/api/events');

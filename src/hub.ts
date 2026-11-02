@@ -262,7 +262,16 @@ export async function showHub(root: HTMLElement) {
   async function poll() {
     if (polling || stopped || document.hidden) return;
     polling = true;
-    try { state = await api<HubState>('hub', { signal: AbortSignal.timeout(10_000) }); liveText(); void previews(); }
+    try {
+      const next = await api<HubState>('hub', { signal: AbortSignal.timeout(10_000) });
+      const changed = state.satellites.map(s => s.id).join(',') !== next.satellites.map(s => s.id).join(',');
+      state = next;
+      if (changed) render(); else liveText();
+      const policy = root.querySelector<HTMLSelectElement>('#hub-policy');
+      if (policy && policy !== document.activeElement) policy.value = state.updatePolicy;
+      if (toast.textContent === 'Hub is reconnecting…') notice('');
+      void previews();
+    }
     catch { notice('Hub is reconnecting…', true); }
     finally { polling = false; }
   }
