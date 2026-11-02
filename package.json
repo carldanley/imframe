@@ -12,6 +12,10 @@
     "check": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:container": "node scripts/smoke-container.mjs",
+    "test:pi": "node --test scripts/pi-*.test.mjs",
+    "test:release": "node --test scripts/release.test.mjs",
+    "version:bump": "npm version --no-git-tag-version",
+    "release:check": "node scripts/release.mjs",
     "build": "npm run check && vite build && tsc -p tsconfig.server.json",
     "start": "node --env-file-if-exists=.env build/server/server/index.js",
     "demo": "node scripts/dev.mjs --demo"

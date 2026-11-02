@@ -50,3 +50,28 @@ test('album shuffling remains fixed within a cycle when the library is polled', 
   queue.update(albums, config);
   assert.deepEqual([queue.next()!.id, queue.next()!.id, queue.next()!.id], ['4', '1', '2']);
 });
+
+test('lookahead does not consume or reshuffle upcoming media when the library is refreshed', () => {
+  let random = 0;
+  const config = { ...settings, mediaOrder: 'shuffle' as const };
+  const queue = new Playlist(config, () => random);
+  const albums = [{ albumId: 'a', media: [media('1'), media('2'), media('3'), media('4')] }];
+  queue.update(albums, config);
+  const expected = queue.peek(4).map(item => item.id);
+  assert.deepEqual(queue.peek(3).map(item => item.id), expected.slice(0, 3));
+  assert.equal(queue.next()!.id, expected[0]);
+  random = 0.99;
+  queue.update(albums, config);
+  assert.deepEqual(queue.peek(3).map(item => item.id), expected.slice(1));
+  assert.deepEqual(Array.from({ length: 3 }, () => queue.next()!.id), expected.slice(1));
+});
+
+test('cancelled preparation returns an undisplayed item, including at a cycle boundary', () => {
+  const queue = new Playlist(settings);
+  queue.update([{ albumId: 'a', media: [media('1'), media('2')] }], settings);
+  assert.equal(queue.next()!.id, '1');
+  const pending = queue.next()!;
+  queue.peek(3);
+  queue.putBack(pending.id);
+  assert.equal(queue.next()!.id, '2');
+});

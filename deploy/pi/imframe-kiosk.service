@@ -1,0 +1,11 @@
+[Unit]
+Description=imframe Chromium display
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+EnvironmentFile=-%h/.config/imframe/browser.env
+ExecStart=%h/.local/libexec/imframe/kiosk.sh
+Restart=always
+RestartSec=5
+TimeoutStopSec=15

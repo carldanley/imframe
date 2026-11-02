@@ -19,8 +19,9 @@ Run imframe on a Raspberry Pi connected to a monitor, choose albums from your ph
 - Display full-size photos, with support for 4K screens.
 - Play videos silently through to the end.
 - Play a Live Photo's motion, fade into its still, then start the photo timer. Motion can also be turned off.
-- Preload the next item while the current one plays.
+- Download up to five upcoming items early, with a configurable cache limit.
 - Keep filenames and controls off the picture in kiosk mode.
+- With the Pi installer, start the frame at boot and check for container updates automatically.
 
 ### Make each frame your own
 
@@ -35,6 +36,7 @@ Run imframe on a Raspberry Pi connected to a monitor, choose albums from your ph
 | Date taken | Calendar icon and date in `MM.DD.YY` format, in any corner |
 | Countdown | A progress bar along any edge, or a circular countdown in any corner |
 | Video source | Original file or Immich's playback version for compatibility |
+| Preloading | 1–5 upcoming items; a temporary download cache from 128 MB to 1 GB |
 
 Location, date, and countdown displays are optional. Photos and videos both get a blurred background when they don't fill the screen.
 
@@ -62,6 +64,8 @@ docker compose -f compose.ghcr.yaml up -d
 Open `http://<frame-address>:3000` on your phone to choose albums and save settings. Open `http://localhost:3000/frame?kiosk=1` in Chromium on the frame itself.
 
 Settings stay on that frame and survive container updates. The API key stays in the backend. imframe is intended for a trusted home network; it has no login page and needs access to Immich to load media.
+
+Use `latest` to follow stable releases, a minor tag such as `0.1` for patch updates, or a full version such as `0.1.0` to stay on one release. See [update options](docs/setup.md#automatic-updates) for details.
 
 **Using HEIC or RAW photos?** Enable full-size image generation in Immich first. See the [setup guide](docs/setup.md#heic-and-raw-photos).
 

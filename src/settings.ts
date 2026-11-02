@@ -60,6 +60,9 @@ export async function showSettings(root: HTMLElement) {
               <label class="field">Video source<select name="videoSource"><option value="original">Original · highest quality</option><option value="immich">Immich playback · compatibility</option></select></label></div>
             <p class="hint">Photos use full-size files. The display target checks available detail; it does not change your monitor’s output or upscale the source. Immich playback may use a lower-resolution video.</p>
             <label class="toggle-field"><input type="checkbox" name="livePhotos" /><span>Play Live Photo motion</span></label>
+            <div class="field-grid"><label class="field">Preload ahead<input name="preloadCount" type="number" min="1" max="5" step="1" required /><span class="field-caption">Upcoming items · 3 recommended</span></label>
+              <label class="field">Download cache limit<select name="preloadMegabytes"><option value="128">128 MB</option><option value="256">256 MB</option><option value="512">512 MB</option><option value="1024">1 GB</option></select></label></div>
+            <p class="hint">Download upcoming photos, videos, and Live Photo motion early. Larger files that do not fit the cache stream normally. Downloads are temporary and keep their full quality.</p>
             <label class="field compact-field">Check albums every<input name="refreshSeconds" type="number" min="15" max="3600" step="1" required /><span class="field-caption">Seconds</span></label>
           </section>
         </div>
@@ -170,7 +173,7 @@ export async function showSettings(root: HTMLElement) {
 
   async function report() {
     try {
-      const data = await api<({ media: string; location?: string | null; sourcePixels: string; browserPixels: string; target: string; warnings: string[]; recentErrors: string[]; totalMedia?: number; reportedAt: string } & Partial<PlaybackHealthReport>) | null>('player');
+      const data = await api<({ media: string; location?: string | null; sourcePixels: string; browserPixels: string; target: string; warnings: string[]; recentErrors: string[]; totalMedia?: number; reportedAt: string; preload?: { ahead: number; ready: number; downloading: number; bytes: number; limitBytes: number } } & Partial<PlaybackHealthReport>) | null>('player');
       const target = root.querySelector('#frame-report')!;
       const playbackNotice = root.querySelector<HTMLElement>('#playback-message')!;
       playbackNotice.hidden = !data?.unavailableCount;
@@ -187,6 +190,7 @@ export async function showSettings(root: HTMLElement) {
         <p>${data.media ? e(data.media) : 'Waiting for media'}</p><p>Media: ${e(data.sourcePixels ?? '—')} · Browser output: ${e(data.browserPixels)} · Target: ${e(data.target)}</p>
         ${data.location ? `<p>Location: ${e(data.location)}</p>` : ''}
         ${data.totalMedia === undefined ? '' : `<p>${data.totalMedia} items in selected albums · ${count} unavailable</p>`}
+        ${data.preload ? `<p>Preloaded: ${data.preload.ready} of ${data.preload.ahead} upcoming items · ${data.preload.downloading ? 'Downloading · ' : ''}${Math.round(data.preload.bytes / 1024 / 1024)} / ${Math.round(data.preload.limitBytes / 1024 / 1024)} MB</p>` : ''}
         ${unavailable.map(item => `<p class="report-warning">${e(item.name)}: ${e(item.message)}</p>`).join('')}
         ${[...(data.warnings ?? []), ...(data.recentErrors ?? [])].map(text => `<p class="report-warning">${e(text)}</p>`).join('')}`;
     } catch { /* Status is supplementary; keep the settings form usable. */ }

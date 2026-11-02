@@ -40,17 +40,32 @@ jobs:
             --entrypoint /bin/sh \
             rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
             -c 'actionlint /workflows/*.y*ml'
+      - name: Lint Raspberry Pi deployment scripts
+        run: |
+          docker run --rm --network none \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/deploy/pi,target=/scripts,readonly" \
+            --entrypoint /bin/sh \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -c 'shellcheck /scripts/*.sh'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - name: Check release version and tag
+        run: npm run release:check
       - name: Lint TypeScript and JavaScript
         run: npm run lint
       - name: Audit dependencies
         run: npm audit --audit-level=low
       - name: Run unit and integration tests
         run: npm test
+      - name: Check the optional Raspberry Pi browser installer
+        run: python3 -c "import ast, pathlib; ast.parse(pathlib.Path('deploy/pi/install-browser.py').read_text())"
+      - name: Test Raspberry Pi provisioning and update recovery
+        run: npm run test:pi
+      - name: Test release versioning and update channels
+        run: npm run test:release
       - name: Type-check and build production assets
         run: npm run build
 
@@ -96,6 +111,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Serialize channel updates. Each job reads the current tags after it starts,
+    # so publishing an older release cannot move latest or a series backward.
+    concurrency:
+      group: ghcr-publish-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -104,7 +124,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+      - name: Choose release tags
+        id: release
+        run: node scripts/release.mjs
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Set lowercase image name
         id: image
@@ -123,9 +150,10 @@ jobs:
           flavor: latest=false
           tags: |
             type=sha
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) }}
+            type=raw,value=${{ steps.release.outputs.version }},enable=${{ steps.release.outputs.release == 'true' }},priority=900
+            type=raw,value=${{ steps.release.outputs.minor }},enable=${{ steps.release.outputs.publish_minor == 'true' }},priority=800
+            type=raw,value=${{ steps.release.outputs.major }},enable=${{ steps.release.outputs.publish_major == 'true' }},priority=700
+            type=raw,value=latest,enable=${{ steps.release.outputs.publish_latest == 'true' }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - name: Publish AMD64 and ARM64

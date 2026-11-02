@@ -17,6 +17,8 @@ export interface FrameSettings {
   videoSource: 'original' | 'immich';
   livePhotos: boolean;
   refreshSeconds: number;
+  preloadCount: number;
+  preloadMegabytes: number;
   showLocation: boolean;
   locationCorner: LocationCorner;
   showDate: boolean;
@@ -32,6 +34,7 @@ export const defaults: FrameSettings = {
   photoSeconds: 12, fit: 'contain', motion: 'none', zoomPercent: 8,
   transition: 'fade', transitionSeconds: 0.8, resolution: '4k',
   videoSource: 'original', livePhotos: true, refreshSeconds: 60,
+  preloadCount: 3, preloadMegabytes: 512,
   showLocation: false, locationCorner: 'bottom-left',
   showDate: false, dateCorner: 'top-left',
   progressStyle: 'off', progressPosition: 'bottom', progressCorner: 'bottom-right',
@@ -120,6 +123,10 @@ export function parseSettings(input: unknown): FrameSettings {
   const progressStyle = p.progressStyle === undefined ? defaults.progressStyle : choice('progressStyle', ['off', 'bar', 'ring']);
   const progressPosition = p.progressPosition === undefined ? defaults.progressPosition : choice('progressPosition', ['top', 'bottom', 'left', 'right']);
   const legacyCorners = { top: 'top-right', bottom: 'bottom-right', left: 'bottom-left', right: 'bottom-right' } as const;
+  const preloadCount = p.preloadCount === undefined ? defaults.preloadCount : number('preloadCount', 1, 5);
+  const preloadMegabytes = p.preloadMegabytes === undefined ? defaults.preloadMegabytes : number('preloadMegabytes', 128, 1024);
+  if (!Number.isInteger(preloadCount)) throw new Error('preloadCount must be a whole number.');
+  if (![128, 256, 512, 1024].includes(preloadMegabytes)) throw new Error('Choose a supported preloadMegabytes limit.');
   return {
     schemaVersion: 1, name: p.name.trim(), albumIds: [...new Set(p.albumIds as string[])],
     playbackMode: choice('playbackMode', ['mixed', 'albums']), shuffleAlbums: boolean('shuffleAlbums'),
@@ -129,6 +136,7 @@ export function parseSettings(input: unknown): FrameSettings {
     transition: choice('transition', ['fade', 'slide', 'cut', 'random']), transitionSeconds: number('transitionSeconds', 0.2, 3),
     resolution: choice('resolution', ['4k', '1080p']), videoSource: choice('videoSource', ['original', 'immich']),
     livePhotos: boolean('livePhotos'), refreshSeconds: number('refreshSeconds', 15, 3600),
+    preloadCount, preloadMegabytes,
     // Older settings files remain valid; the next save persists the new fields.
     showLocation: p.showLocation === undefined ? defaults.showLocation : boolean('showLocation'),
     locationCorner: p.locationCorner === undefined ? defaults.locationCorner : choice('locationCorner', ['bottom-left', 'bottom-right', 'top-left', 'top-right']),

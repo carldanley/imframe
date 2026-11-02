@@ -1,0 +1,27 @@
+{
+  "version": "156.0.8078.73",
+  "release": "chromium-156.0.8078.73-1-rpt1-hevc1",
+  "source": "https://github.com/sslivins/chromium-rpi-hevc/releases/tag/chromium-156.0.8078.73-1-rpt1-hevc1",
+  "assets": [
+    {
+      "name": "chromium-common_156.0.8078.73-1.deb13u1+rpt1_arm64.deb",
+      "url": "https://github.com/sslivins/chromium-rpi-hevc/releases/download/chromium-156.0.8078.73-1-rpt1-hevc1/chromium-common_156.0.8078.73-1.deb13u1%2Brpt1_arm64.deb",
+      "sha256": "66439efcd5809aecfa37204adb103019ab01acfa3939330956efe3127d2940d1"
+    },
+    {
+      "name": "chromium-l10n_156.0.8078.73-1.deb13u1+rpt1_all.deb",
+      "url": "https://github.com/sslivins/chromium-rpi-hevc/releases/download/chromium-156.0.8078.73-1-rpt1-hevc1/chromium-l10n_156.0.8078.73-1.deb13u1%2Brpt1_all.deb",
+      "sha256": "430fcee1265cc304a03a8ea9e9772adb7e24e56799e85fde989d24e1b747d31f"
+    },
+    {
+      "name": "chromium-sandbox_156.0.8078.73-1.deb13u1+rpt1_arm64.deb",
+      "url": "https://github.com/sslivins/chromium-rpi-hevc/releases/download/chromium-156.0.8078.73-1-rpt1-hevc1/chromium-sandbox_156.0.8078.73-1.deb13u1%2Brpt1_arm64.deb",
+      "sha256": "2bd0dd473424c6d8617ac3850676bb6d45d09191bd1be48577be7722313393bd"
+    },
+    {
+      "name": "chromium_156.0.8078.73-1.deb13u1+rpt1_arm64.deb",
+      "url": "https://github.com/sslivins/chromium-rpi-hevc/releases/download/chromium-156.0.8078.73-1-rpt1-hevc1/chromium_156.0.8078.73-1.deb13u1%2Brpt1_arm64.deb",
+      "sha256": "dd90307ee1b91aaa979d4c3800b3fcdf53263ec609dd66171e73dd7b3302f2c9"
+    }
+  ]
+}

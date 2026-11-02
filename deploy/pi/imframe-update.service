@@ -1,0 +1,12 @@
+[Unit]
+Description=Check GHCR for an imframe update
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/imframe
+ExecStart=/usr/local/libexec/imframe/update.sh
+TimeoutStartSec=10min
+UMask=0077

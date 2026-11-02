@@ -108,6 +108,21 @@ test('existing settings gain overlay defaults without losing albums; overlay pre
   assert.throws(() => parseSettings({ ...defaults, progressCorner: 'right' }), /progressCorner/);
 });
 
+test('preload preferences default for existing frames and persist within supported limits', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'imframe-test-')); t.after(() => rm(dir, { recursive: true, force: true }));
+  const { preloadCount, preloadMegabytes, ...legacy } = defaults;
+  await writeFile(join(dir, 'settings.json'), JSON.stringify(legacy));
+  const store = new SettingsStore(dir); await store.load();
+  assert.equal(store.get().preloadCount, 3);
+  assert.equal(store.get().preloadMegabytes, 512);
+  await store.save({ ...store.get(), preloadCount: 5, preloadMegabytes: 1024 });
+  const restarted = new SettingsStore(dir); await restarted.load();
+  assert.equal(restarted.get().preloadCount, 5);
+  assert.equal(restarted.get().preloadMegabytes, 1024);
+  for (const value of [0, 6, 1.5]) assert.throws(() => parseSettings({ ...defaults, preloadCount: value }), /preloadCount/);
+  for (const value of [0, 513, 2048]) assert.throws(() => parseSettings({ ...defaults, preloadMegabytes: value }), /preloadMegabytes/);
+});
+
 test('legacy circular countdowns move to corners while bar edge preferences stay intact', () => {
   const { progressCorner, ...legacy } = defaults;
   for (const [edge, corner] of Object.entries({ top: 'top-right', bottom: 'bottom-right', left: 'bottom-left', right: 'bottom-right' })) {

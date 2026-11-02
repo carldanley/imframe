@@ -3,6 +3,7 @@ import { defaults, formatLocation, formatTakenDate, mediaUrl, type FrameSettings
 import { Playlist } from '../shared/playlist.js';
 import { PlaybackHealth } from '../shared/playback-health.js';
 import { PlaybackClock } from '../shared/playback-clock.js';
+import { MediaPrefetch, type PrefetchedFile } from '../shared/media-prefetch.js';
 import { PlaybackIndicators } from './playback-indicators.js';
 import { loadVideoAperture } from '../shared/video-aperture.js';
 import { frameVideo } from './video-framing.js';
@@ -137,9 +138,8 @@ function videoStill(video: HTMLVideoElement) {
   return canvas.toDataURL('image/jpeg', 0.8);
 }
 
-async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement, cancel: AbortSignal): Promise<Slide> {
+async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement, cancel: AbortSignal, needed: AbortSignal, prefetch: MediaPrefetch): Promise<Slide> {
   const started = performance.now();
-  const signal = AbortSignal.any([cancel, AbortSignal.timeout(45_000)]);
   const element = document.createElement('div');
   element.className = 'slide';
   element.setAttribute('aria-hidden', 'true');
@@ -168,7 +168,13 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
     else element.style.removeProperty('--caption-height');
   });
   captionSize.observe(caption);
-  let blobUrl: string | undefined;
+  const blobUrls: string[] = [];
+  const prefetched: PrefetchedFile[] = [];
+  const objectUrl = (blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    blobUrls.push(url);
+    return url;
+  };
   let disposeVideoFraming: (() => void) | undefined;
   const slide: Slide = {
     media, element, caption, date, warnings: [], width: 0, height: 0, loadMs: 0,
@@ -178,17 +184,35 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
       for (const animation of element.getAnimations({ subtree: true })) animation.cancel();
       if (slide.video) { slide.video.pause(); slide.video.removeAttribute('src'); slide.video.load(); }
       element.remove();
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      for (const url of blobUrls) URL.revokeObjectURL(url);
+      for (const file of prefetched) file.release();
     },
   };
   try {
+    const photoUrl = mediaUrl(media, 'photo', settings);
+    const videoUrl = mediaUrl(media, 'video', settings, media.type === 'IMAGE');
+    const hasVideo = media.type === 'VIDEO' || (media.livePhotoVideoId && settings.livePhotos);
+    const acquire = async (url: string) => {
+      const file = await prefetch.acquire(url, cancel, needed);
+      if (file) prefetched.push(file);
+      return file?.blob;
+    };
+    const cachedPhoto = media.type === 'IMAGE' ? await acquire(photoUrl) : undefined;
+    const cachedVideo = hasVideo ? await acquire(videoUrl) : undefined;
+    // Waiting behind a long current video does not consume the decode timeout.
+    const signal = AbortSignal.any([cancel, AbortSignal.timeout(45_000)]);
+    signal.throwIfAborted();
     if (media.type === 'IMAGE') {
-      const response = await fetch(mediaUrl(media, 'photo', settings), { signal });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Photo download failed.' }));
-        throw new Error(error.error);
+      let blob = cachedPhoto;
+      if (!blob) {
+        const response = await fetch(photoUrl, { signal });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Photo download failed.' }));
+          throw new Error(error.error);
+        }
+        blob = await response.blob();
       }
-      blobUrl = URL.createObjectURL(await response.blob());
+      const blobUrl = objectUrl(blob);
       const image = new Image();
       image.alt = '';
       image.src = blobUrl;
@@ -204,7 +228,7 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
       }
       foreground.append(image);
     }
-    if (media.type === 'VIDEO' || (media.livePhotoVideoId && settings.livePhotos)) {
+    if (hasVideo) {
       const video = document.createElement('video');
       video.muted = true;
       video.defaultMuted = true;
@@ -213,7 +237,7 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
       video.setAttribute('aria-label', media.type === 'VIDEO' ? 'Video' : 'Live Photo motion');
       foreground.append(video);
       slide.video = video;
-      video.src = mediaUrl(media, 'video', settings, media.type === 'IMAGE');
+      video.src = cachedVideo ? objectUrl(cachedVideo) : videoUrl;
       video.load();
       // iPhone Live Photos can contain padded edges that Chrome does not crop itself.
       const aperture = slide.image ? loadVideoAperture(video.src, signal) : Promise.resolve(null);
@@ -332,8 +356,10 @@ export async function startPlayer(root: HTMLElement) {
   let settings = structuredClone(defaults);
   const playlist = new Playlist(settings);
   const health = new PlaybackHealth();
+  const prefetch = new MediaPrefetch((input, init) => fetch(input, init), () => report());
+  prefetch.pause(true);
   let current: Slide | undefined;
-  let pending: { id: string; updatedAt: string; ready: boolean; controller: AbortController; promise: Promise<Slide | undefined> } | undefined;
+  let pending: { id: string; updatedAt: string; ready: boolean; controller: AbortController; needed: AbortController; promise: Promise<Slide | undefined> } | undefined;
   let displayController = new AbortController();
   let stopped = false;
   let refreshing = false;
@@ -381,8 +407,10 @@ export async function startPlayer(root: HTMLElement) {
   });
 
   function report(error?: string) {
+    if (stopped) return;
     if (error) recentErrors = [...recentErrors.slice(-4), error];
     const quality = current?.video?.getVideoPlaybackQuality();
+    const upcoming = lookahead();
     const data = {
       state: current ? 'playing' : 'waiting', frame: settings.name,
       media: current?.media.name ?? null, kind: current?.media.type ?? null,
@@ -397,6 +425,11 @@ export async function startPlayer(root: HTMLElement) {
       lastLibraryRefresh: lastLibrary.refreshedAt,
       countdownSeconds: clock.sample(performance.now(), current?.video)?.remainingSeconds ?? null,
       loadingMedia: awaitingMedia || videoBuffering,
+      preload: {
+        ahead: upcoming.length,
+        ready: upcoming.filter(media => fileUrls(media).every(url => prefetch.ready(url))).length,
+        downloading: prefetch.loading, bytes: prefetch.bytes, limitBytes: settings.preloadMegabytes * 1024 * 1024,
+      },
     };
     void api('player', { method: 'POST', body: JSON.stringify(data) }).catch(() => {});
   }
@@ -405,7 +438,25 @@ export async function startPlayer(root: HTMLElement) {
     const previous = pending;
     pending = undefined;
     previous?.controller.abort();
+    if (previous?.id) playlist.putBack(previous.id);
     void previous?.promise.then(slide => slide?.dispose());
+  }
+
+  function fileUrls(media: Media): string[] {
+    const urls = media.type === 'IMAGE' ? [mediaUrl(media, 'photo', settings)] : [];
+    if (media.type === 'VIDEO' || (media.livePhotoVideoId && settings.livePhotos)) {
+      urls.push(mediaUrl(media, 'video', settings, media.type === 'IMAGE'));
+    }
+    return urls;
+  }
+
+  function lookahead() {
+    const next = pending?.id ? playlist.get(pending.id) : undefined;
+    return [...(next ? [next] : []), ...playlist.peek(settings.preloadCount - (next ? 1 : 0))];
+  }
+
+  function updatePrefetch() {
+    prefetch.plan(lookahead().flatMap(fileUrls), settings.preloadMegabytes * 1024 * 1024);
   }
 
   async function refresh() {
@@ -424,10 +475,11 @@ export async function startPlayer(root: HTMLElement) {
         health.retain(id => playlist.contains(id));
         refreshedAt = Date.now();
         if (pending && (changed || !playlist.contains(pending.id) || playlist.get(pending.id)?.updatedAt !== pending.updatedAt)) cancelPending();
+        updatePrefetch();
         if (current) {
           const media = playlist.get(current.media.id);
           if (media) { current.media = media; updateOverlays(current, settings); }
-          else { current.dispose(); current = undefined; clock.clear(); awaitingMedia = true; displayController.abort(); }
+          else { current.dispose(); current = undefined; clock.clear(); awaitingMedia = true; prefetch.pause(true); displayController.abort(); }
         }
         if (!playlist.size) {
           message.hidden = false;
@@ -444,7 +496,7 @@ export async function startPlayer(root: HTMLElement) {
   function preload() {
     if (pending || !playlist.size) return;
     const controller = new AbortController();
-    const job = { id: '', updatedAt: '', ready: false, controller, promise: Promise.resolve<Slide | undefined>(undefined) };
+    const job = { id: '', updatedAt: '', ready: false, controller, needed: new AbortController(), promise: Promise.resolve<Slide | undefined>(undefined) };
     pending = job;
     job.promise = (async () => {
       // Find a usable successor while the current slide is still on screen.
@@ -454,8 +506,9 @@ export async function startPlayer(root: HTMLElement) {
         const media = playlist.next();
         if (!media) return;
         job.id = media.id; job.updatedAt = media.updatedAt;
+        updatePrefetch();
         try {
-          const slide = await prepare(media, { ...settings }, stage, controller.signal);
+          const slide = await prepare(media, { ...settings }, stage, controller.signal, job.needed.signal, prefetch);
           if (controller.signal.aborted) { slide.dispose(); return; }
           job.ready = true;
           health.recovered(media.id);
@@ -497,6 +550,7 @@ export async function startPlayer(root: HTMLElement) {
     document.removeEventListener('fullscreenchange', fullscreenChanged);
     fullscreenDisplay.removeEventListener('change', fullscreenChanged);
     cancelPending(); displayController.abort(); current?.dispose();
+    prefetch.dispose();
   }, { once: true });
   showControls();
   updateIndicators();
@@ -507,7 +561,9 @@ export async function startPlayer(root: HTMLElement) {
     preload();
     const job = pending;
     awaitingMedia = true;
+    prefetch.pause(true);
     if (!job) { clock.clear(); await delay(1000); continue; }
+    job.needed.abort();
     const slide = await job.promise;
     if (stopped) { slide?.dispose(); break; }
     if (pending !== job) { slide?.dispose(); continue; }
@@ -532,11 +588,17 @@ export async function startPlayer(root: HTMLElement) {
     if (slide.video && slide.image) clock.startLivePhoto(photoSeconds);
     else if (slide.video) clock.startVideo();
     else clock.startPhoto(photoSeconds, performance.now());
+    prefetch.pause(false);
     preload();
     report();
     try {
       if (slide.video) {
-        try { await playVideo(slide.video, displayController.signal, active => { videoBuffering = active; }); }
+        try {
+          await playVideo(slide.video, displayController.signal, active => {
+            videoBuffering = active;
+            prefetch.pause(active || awaitingMedia);
+          });
+        }
         catch (error) { report((error as Error).message); }
         if (slide.image && !displayController.signal.aborted) {
           await dissolveToStill(slide, 650, displayController.signal);
