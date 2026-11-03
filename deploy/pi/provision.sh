@@ -83,7 +83,7 @@ remote_dir=$candidate
 mkdir -p "$temporary/payload/deploy/pi"
 cp "$repo_dir/compose.ghcr.yaml" "$temporary/payload/"
 cp "$source_dir"/*.sh "$source_dir"/*.service "$source_dir"/*.timer \
-  "$source_dir/install-browser.py" "$source_dir/agent.py" "$source_dir/chromium-hevc.json" "$temporary/payload/deploy/pi/"
+  "$source_dir/install-browser.py" "$source_dir/agent.py" "$source_dir/display.py" "$source_dir/chromium-hevc.json" "$temporary/payload/deploy/pi/"
 cp "$env_file" "$temporary/payload/connection.env"
 chmod 0600 "$temporary/payload/connection.env"
 # remote_dir was restricted to the mktemp path pattern above.

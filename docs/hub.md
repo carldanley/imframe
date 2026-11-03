@@ -51,6 +51,7 @@ The updater stays on the Pi host. Neither Hub nor the satellite container mounts
 - **Add Frame:** enter its address. Hub reads the existing name. Renaming under Advanced changes the name on the frame itself.
 - **Albums:** choose multiple albums, search the scrollable list, and set playback order.
 - **Style:** change photo timing, motion, transitions, captions, and countdowns.
+- **Sleep:** set daily screen sleep and wake times in the frame’s local time zone. Existing Pis need the [display service](setup.md#screen-sleep-hours) once. The schedule keeps working without Hub.
 - **Advanced:** change quality preferences, preloading, the name, or request a software update.
 - **Previous / Pause / Next:** control the active player. Acknowledgment comes from the player; commands are never queued for an offline frame. Previous uses this player session’s history.
 

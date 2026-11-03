@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run as the existing desktop user. This does not need access to Docker or secrets.
+[[ $EUID != 0 ]] || { echo 'Run this as the Pi desktop user, without sudo.' >&2; exit 1; }
+command -v wlopm >/dev/null || { echo 'Install wlopm first: sudo apt-get install wlopm' >&2; exit 1; }
+[[ -f $HOME/.local/libexec/imframe/kiosk.sh ]] || { echo 'Provision this frame before adding display sleep.' >&2; exit 1; }
+source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+install -d -m 0755 "$HOME/.config/systemd/user"
+install -m 0755 "$source_dir/display.py" "$source_dir/session.sh" "$HOME/.local/libexec/imframe/"
+install -m 0644 "$source_dir/imframe-display.service" "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+if systemctl --user show-environment | grep -q '^WAYLAND_DISPLAY='; then
+  systemctl --user restart imframe-display.service
+  echo 'Display sleep service installed and running.'
+else
+  echo 'Display sleep service installed. It will start at the next desktop login.'
+fi

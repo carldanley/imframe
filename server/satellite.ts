@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import type { FrameSettings } from '../shared/model.js';
 import { isId } from '../shared/model.js';
-import type { PlaybackCommand, PlaybackSnapshot, SatelliteInfo, UpdateState } from '../shared/satellite.js';
+import type { DisplayState, PlaybackCommand, PlaybackSnapshot, SatelliteInfo, UpdateState } from '../shared/satellite.js';
 import { HttpError } from './immich.js';
 import { object } from './http.js';
 import { JsonStore } from './json-store.js';
@@ -16,6 +16,8 @@ export class SatelliteRuntime {
   private preview: Buffer | null = null;
   private previewAt = 0;
   private previewUntil = 0;
+  private display: Omit<DisplayState, 'connected'> = { sleeping: null, timeZone: null, error: null };
+  private displaySeenAt = 0;
   private listeners = new Set<ServerResponse>();
   private commands = new Map<string, { command: PlaybackCommand; session: string; promise: Promise<unknown>; settle: (error?: string) => void }>();
   private completed = new Map<string, { action: string; error?: string }>();
@@ -34,7 +36,20 @@ export class SatelliteRuntime {
   }
   info(settings: FrameSettings): SatelliteInfo {
     return { id: this.saved.id, apiVersion: 1, version: this.version, name: settings.name, settings,
-      playback: this.playback, playerOnline: this.online, update: structuredClone(this.saved.update) };
+      playback: this.playback, playerOnline: this.online, update: structuredClone(this.saved.update),
+      display: { ...this.display, connected: this.displaySeenAt > 0 && Date.now() - this.displaySeenAt < 45_000 } };
+  }
+  displayAgent(input: unknown, settings: FrameSettings) {
+    const data = object(input);
+    if ((data.sleeping !== null && typeof data.sleeping !== 'boolean') ||
+      typeof data.timeZone !== 'string' || !data.timeZone || data.timeZone.length > 100 ||
+      (data.error !== null && (typeof data.error !== 'string' || data.error.length > 200))) {
+      throw new HttpError(400, 'Invalid display report.');
+    }
+    this.display = { sleeping: data.sleeping as boolean | null, timeZone: data.timeZone, error: data.error as string | null };
+    this.displaySeenAt = Date.now();
+    const { sleepEnabled, sleepStart, sleepEnd } = settings;
+    return { sleepEnabled, sleepStart, sleepEnd };
   }
   subscribe(response: ServerResponse) {
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });

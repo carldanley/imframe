@@ -34,6 +34,13 @@ export interface SatelliteInfo {
   playback: PlaybackSnapshot | null;
   playerOnline: boolean;
   update: UpdateState;
+  display?: DisplayState;
+}
+export interface DisplayState {
+  connected: boolean;
+  sleeping: boolean | null;
+  timeZone: string | null;
+  error: string | null;
 }
 export interface SatelliteRecord {
   id: string;

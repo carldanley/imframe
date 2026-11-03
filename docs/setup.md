@@ -46,6 +46,20 @@ Files that exceed the available cache space stream normally. If a download is un
 
 **Frame status** shows how many upcoming items are downloaded and how much cache space is in use. The limit covers file bytes; rendering and video decoding need additional memory. Cached files are discarded as they leave the upcoming selection or the player closes. There is no persistent offline library.
 
+## Screen sleep hours
+
+In Hub, open a frame and choose **Sleep**, or use **Sleep hours** on the frame’s own settings page. Set **Sleep at** and **Wake at**, then enable **Sleep on a schedule**. It is off by default. Hours repeat daily in the Pi’s local time zone, including daylight-saving changes. Overnight windows work automatically; sleep and wake times must differ.
+
+The Pi uses `wlopm` to switch display power off without removing the monitor from the desktop. A monitor that supports standby can then sleep. The Pi and app keep running. Each Pi saves its schedule locally, so waking does not depend on Hub, a working network, or the app container. Turning off the schedule wakes the screen within about 15 seconds.
+
+Fresh Pi setups include the display service. For an existing frame, update its app and run this from a current checkout **on the Pi as the desktop user, without sudo**:
+
+```sh
+bash deploy/pi/upgrade-display.sh
+```
+
+If `wlopm` is missing, install it with `sudo apt-get install wlopm` first. Re-running the normal Pi provisioner also installs the service; reboot afterward. No Docker socket or display access is added to the app container.
+
 ## Raspberry Pi fullscreen startup
 
 Use a 64-bit OS. The suggested hardware is a Raspberry Pi 5 with 8 GB RAM, active cooling, the official 27 W power supply, and a micro-HDMI cable that supports your monitor's resolution. Power the monitor separately; the Pi's USB-C power port is not a display output.
@@ -133,12 +147,12 @@ The Pi installer enables an agent that checks for Hub requests about once a minu
 | Image tag | Update behavior |
 | --- | --- |
 | `:latest` | Follow the newest stable release, including new major versions |
-| `:0.2` | Follow patch releases in the `0.2.x` series |
+| `:0.3` | Follow patch releases in the `0.3.x` series |
 | `:1` | Follow stable releases in major version 1 (available from 1.0 onward) |
-| `:0.2.1` | Stay on that specific release until you change the tag |
-| `:0.2.0-rc.1` | Test that specific prerelease |
+| `:0.3.0` | Stay on that specific release until you change the tag |
+| `:0.3.0-rc.1` | Test that specific prerelease |
 
-These are examples; each tag becomes available after its release is published. For example, `IMFRAME_IMAGE=ghcr.io/carldanley/imframe:0.2` keeps a frame on `0.2.x` while still receiving patch updates. New installs default to `latest`. The same tags work with the provisioner's `--image` option.
+These are examples; each tag becomes available after its release is published. For example, `IMFRAME_IMAGE=ghcr.io/carldanley/imframe:0.3` keeps a frame on `0.3.x` while still receiving patch updates. New installs default to `latest`. The same tags work with the provisioner's `--image` option.
 
 - Downloads happen while the current frame keeps playing.
 - An unchanged image leaves playback running.

@@ -1,6 +1,8 @@
 import { api, escapeHtml as e } from './api.js';
 import { defaults, type Album, type FrameSettings, type Status } from '../shared/model.js';
 import type { PlaybackHealthReport } from '../shared/playback-health.js';
+import type { SatelliteInfo } from '../shared/satellite.js';
+import { displayMessage } from '../shared/display.js';
 
 export async function showSettings(root: HTMLElement) {
   let settings = structuredClone(defaults);
@@ -53,6 +55,13 @@ export async function showSettings(root: HTMLElement) {
                 <label class="field" id="countdown-corner-field" hidden>Countdown corner<select name="progressCorner"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-left">Top left</option><option value="top-right">Top right</option></select></label></div>
               <p class="hint">Bars fill left to right on the top or bottom, and top to bottom on either side. The circle shows the seconds until the next item in your chosen corner.</p>
             </div>
+          </section>
+          <section class="card" aria-labelledby="sleep-title">
+            <div class="card-heading"><div><h2 id="sleep-title">Sleep hours</h2></div></div>
+            <label class="toggle-field"><input type="checkbox" name="sleepEnabled" /><span>Sleep on a schedule</span></label>
+            <div class="field-grid"><label class="field">Sleep at<input name="sleepStart" type="time" required /></label><label class="field">Wake at<input name="sleepEnd" type="time" required /></label></div>
+            <p class="hint" id="display-status">Checking the frame’s display…</p>
+            <p class="hint">Turns off the screen during these hours every day. The Pi stays online and wakes even if Hub is unavailable. Turn off the schedule to wake early.</p>
           </section>
           <section class="card" aria-labelledby="quality-title">
             <div class="card-heading"><div><span class="section-number">03</span><h2 id="quality-title">Picture quality</h2></div><span class="pill">Sound off</span></div>
@@ -172,6 +181,10 @@ export async function showSettings(root: HTMLElement) {
   window.addEventListener('beforeunload', event => { if (dirty) event.preventDefault(); });
 
   async function report() {
+    try {
+      const { display } = await api<SatelliteInfo>('satellite');
+      root.querySelector('#display-status')!.textContent = displayMessage(display);
+    } catch { root.querySelector('#display-status')!.textContent = 'The frame’s display status is unavailable.'; }
     try {
       const data = await api<({ media: string; location?: string | null; sourcePixels: string; browserPixels: string; target: string; warnings: string[]; recentErrors: string[]; totalMedia?: number; reportedAt: string; preload?: { ahead: number; ready: number; downloading: number; bytes: number; limitBytes: number } } & Partial<PlaybackHealthReport>) | null>('player');
       const target = root.querySelector('#frame-report')!;

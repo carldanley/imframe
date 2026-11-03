@@ -7,4 +7,4 @@ for variable in DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_SESSION_TYPE XDG_CURRENT_
     systemctl --user import-environment "$variable"
   fi
 done
-systemctl --user start imframe-kiosk.service
+systemctl --user start imframe-kiosk.service imframe-display.service

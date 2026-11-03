@@ -68,6 +68,7 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
       if (url.pathname === '/api/management' && request.method === 'PUT') return json(response, 200, await satellite.manage(await readJson(request)));
       if (url.pathname === '/api/update' && request.method === 'POST') return json(response, 202, await satellite.requestUpdate());
       if (url.pathname === '/api/update-agent' && request.method === 'POST') return json(response, 200, await satellite.agent(await readJson(request)));
+      if (url.pathname === '/api/display-agent' && request.method === 'POST') return json(response, 200, satellite.displayAgent(await readJson(request), settings.get()));
       if (url.pathname === '/api/status' && request.method === 'GET') {
         const status: Status = { configured: immich.configured, connected: false, serverUrl: immich.base.href.replace(/\/api\/$/, ''), version: null, error: null, demo: options.demo ?? false };
         try {

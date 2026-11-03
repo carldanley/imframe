@@ -5,4 +5,5 @@ body.hub-page{--hub-paper:#f5f4ee;--hub-surface:#fffefa;--hub-ink:#253c32;--hub-
 @media(max-width:360px){.hub-fields{grid-template-columns:1fr;gap:0}.hub-card-title{flex-direction:column}.hub-page-title .hub-button{font-size:12px}}
 
 .hub-panel{container-type:inline-size}
+.hub-sleep-controls{border:0;padding:0;margin:0;min-width:0}.hub-sleep-controls:disabled{opacity:.55}
 @container(max-width:380px){.hub-fields{grid-template-columns:1fr;gap:0}}

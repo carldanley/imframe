@@ -1,6 +1,7 @@
 import { newId } from '../shared/id.js';
 import { api, escapeHtml as e } from './api.js';
 import { defaults, type Album, type FrameSettings } from '../shared/model.js';
+import { displayMessage } from '../shared/display.js';
 import type { HubState, PlaybackAction, SatelliteRecord } from '../shared/satellite.js';
 import './hub.css';
 
@@ -16,8 +17,9 @@ const corners = [['bottom-left', 'Bottom left'], ['bottom-right', 'Bottom right'
 const numbers = new Set(Object.entries(defaults).filter(([, value]) => typeof value === 'number').map(([key]) => key));
 
   const path = (id: string, suffix: string) => `hub/satellites/${id}/${suffix}`;
-  const online = (s: SatelliteRecord) => !s.error && s.snapshot.playerOnline && Date.now() - Date.parse(s.lastSeenAt) < 15_000;
-  const status = (s: SatelliteRecord) => s.error ? 'Offline' : !s.snapshot.playerOnline ? 'Player offline' : s.snapshot.playback?.paused ? 'Paused' : 'Playing';
+  const asleep = (s: SatelliteRecord) => s.snapshot.display?.connected && s.snapshot.display.sleeping === true;
+  const online = (s: SatelliteRecord) => !s.error && !asleep(s) && s.snapshot.playerOnline && Date.now() - Date.parse(s.lastSeenAt) < 15_000;
+  const status = (s: SatelliteRecord) => s.error ? 'Offline' : asleep(s) ? 'Sleeping' : !s.snapshot.playerOnline ? 'Player offline' : s.snapshot.playback?.paused ? 'Paused' : 'Playing';
 
 export async function showHub(root: HTMLElement) {
   document.body.classList.add('hub-page'); document.title = 'Hub · imframe';
@@ -38,7 +40,7 @@ export async function showHub(root: HTMLElement) {
   const previewUrls = new Map<string, string>();
   const previewBusy = new Set<string>();
   const record = (id = selected) => state.satellites.find(s => s.id === id);
-  const settings = () => ({ ...record()!.snapshot.settings, ...record()!.pendingSettings, ...optimistic.get(selected!) });
+  const settings = () => ({ ...defaults, ...record()!.snapshot.settings, ...record()!.pendingSettings, ...optimistic.get(selected!) });
   root.innerHTML = `<main class="hub-shell"><header class="hub-header"><button class="hub-brand" data-action="home" aria-label="Hub home"><img src="/hub-icon.webp" alt=""/><span>hub<small>BY IMFRAME</small></span></button><button class="hub-icon-button" data-action="hub-settings" aria-label="Hub settings">${icon('settings')}</button></header><div id="hub-content"></div><p class="hub-toast" role="status" hidden></p><dialog class="hub-dialog" aria-labelledby="add-title"></dialog></main>`;
   const content = root.querySelector<HTMLElement>('#hub-content')!;
   const toast = root.querySelector<HTMLElement>('.hub-toast')!;
@@ -54,11 +56,12 @@ export async function showHub(root: HTMLElement) {
   function preview(s: SatelliteRecord, detail = false) {
     const viewport = s.snapshot.playback?.viewport;
     const ratio = detail && viewport && Number.isFinite(viewport.width) && Number.isFinite(viewport.height) && viewport.width > 0 && viewport.height > 0 ? `${viewport.width}/${viewport.height}` : '16/10';
-    return `<div class="hub-preview ${detail ? 'hub-preview-large' : ''}" style="--preview-ratio:${ratio}" data-preview="${s.id}"><span class="hub-preview-placeholder" ${previewUrls.has(s.id) ? 'hidden' : ''}>${icon('frame')}<span>Waiting for the frame</span></span><img alt="Current view on ${e(s.snapshot.name)}" ${previewUrls.has(s.id) ? `src="${previewUrls.get(s.id)}"` : 'hidden'} /><span class="hub-preview-status">${!online(s) ? 'Last view' : 'Live view · updates every 2s'}</span></div>`;
+    return `<div class="hub-preview ${detail ? 'hub-preview-large' : ''}" style="--preview-ratio:${ratio}" data-preview="${s.id}"><span class="hub-preview-placeholder" ${previewUrls.has(s.id) ? 'hidden' : ''}>${icon('frame')}<span>Waiting for the frame</span></span><img alt="Current view on ${e(s.snapshot.name)}" ${previewUrls.has(s.id) ? `src="${previewUrls.get(s.id)}"` : 'hidden'} /><span class="hub-preview-status">${asleep(s) ? 'Sleeping · last view' : !online(s) ? 'Last view' : 'Live view · updates every 2s'}</span></div>`;
   }
   function field(key: keyof FrameSettings, label: string, options?: string[][], min?: number, max?: number, step = 1) {
     const value = settings()[key];
-    return `<label class="hub-field"><span>${label}</span>${options ? `<select name="${key}">${options.map(([id, text]) => `<option value="${id}" ${String(value) === id ? 'selected' : ''}>${text}</option>`).join('')}</select>` : `<input name="${key}" type="${typeof value === 'number' ? 'number' : 'text'}" value="${e(String(value))}" ${min === undefined ? '' : `min="${min}" max="${max}" step="${step}"`} ${key === 'name' ? 'maxlength="80"' : ''} required/>`}</label>`;
+    const type = key === 'sleepStart' || key === 'sleepEnd' ? 'time' : typeof value === 'number' ? 'number' : 'text';
+    return `<label class="hub-field"><span>${label}</span>${options ? `<select name="${key}">${options.map(([id, text]) => `<option value="${id}" ${String(value) === id ? 'selected' : ''}>${text}</option>`).join('')}</select>` : `<input name="${key}" type="${type}" value="${e(String(value))}" ${min === undefined ? '' : `min="${min}" max="${max}" step="${step}"`} ${key === 'name' ? 'maxlength="80"' : ''} required/>`}</label>`;
   }
   function toggle(key: keyof FrameSettings, label: string, hint = '') {
     return `<label class="hub-toggle"><span><strong>${label}</strong>${hint ? `<small>${hint}</small>` : ''}</span><input name="${key}" type="checkbox" ${settings()[key] ? 'checked' : ''}/><i aria-hidden="true"></i></label>`;
@@ -74,6 +77,7 @@ export async function showHub(root: HTMLElement) {
     if (tab === 'albums') return `<div class="hub-section-title"><h2>Choose your albums</h2><button class="hub-text-button" data-action="refresh-albums" type="button">Refresh</button></div><p class="hub-muted">New photos and videos appear automatically.</p><input class="hub-search" type="search" placeholder="Find an album" aria-label="Find an album" value="${e(query)}"/><div class="hub-albums">${albumList()}</div><p class="hub-selection">${s.albumIds.length} ${s.albumIds.length === 1 ? 'album' : 'albums'} selected</p><div class="hub-fields">${field('playbackMode', 'Play albums', [['mixed', 'Mix them together'], ['albums', 'One album at a time']])}${field('mediaOrder', 'Media order', [['shuffle', 'Shuffle'], ['oldest', 'Oldest first'], ['newest', 'Newest first']])}</div><div data-dep="album-order" ${s.playbackMode !== 'albums' ? 'hidden' : ''}>${toggle('shuffleAlbums', 'Shuffle album order')}<details><summary>Album order</summary><ol class="hub-order">${s.albumIds.map((id, i) => `<li><span>${e(albums?.find(a => a.id === id)?.name ?? 'Unavailable album')}</span><button type="button" data-move="${id}" data-direction="-1" aria-label="Move album up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-move="${id}" data-direction="1" aria-label="Move album down" ${i === s.albumIds.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-remove-album="${id}" aria-label="Remove album">×</button></li>`).join('')}</ol></details></div>`;
     if (tab === 'style') return `<h2>Make it yours</h2><div class="hub-fields">${field('photoSeconds', 'Seconds per photo', undefined, 3, 300)}${field('fit', 'Picture fit', [['contain', 'Show the whole picture'], ['cover', 'Fill the screen']])}</div><p class="hub-muted">Videos finish playing. Live Photos play, then stay for the full photo time.</p><div class="hub-fields">${field('motion', 'Photo motion', [['none', 'Still'], ['in', 'Slow zoom in'], ['out', 'Slow zoom out'], ['random', 'Random pan & zoom']])}${field('transition', 'Transition', [['fade', 'Fade'], ['slide', 'Slide'], ['cut', 'Instant'], ['random', 'Random']])}</div><details><summary>Motion & transition details</summary><div class="hub-fields">${field('zoomPercent', 'Zoom percent', undefined, 1, 20)}${field('transitionSeconds', 'Transition seconds', undefined, .2, 3, .1)}</div></details><div class="hub-divider"></div>${toggle('showLocation', 'Show location', 'Place names from your photos')}${toggle('showDate', 'Show date taken', 'Always MM.DD.YY')}<details><summary>Caption positions</summary><div class="hub-fields">${field('locationCorner', 'Location', corners)}${field('dateCorner', 'Date taken', corners)}</div></details><div class="hub-divider"></div>${field('progressStyle', 'Media countdown', [['off', 'Off'], ['bar', 'Edge bar'], ['ring', 'Circular countdown']])}<div data-dep="ring" ${s.progressStyle !== 'ring' ? 'hidden' : ''}>${field('progressCorner', 'Countdown corner', corners)}</div><div data-dep="bar" ${s.progressStyle !== 'bar' ? 'hidden' : ''}>${field('progressPosition', 'Countdown edge', [['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right']])}</div>`;
     const item = record()!;
+    if (tab === 'sleep') return `<h2>Sleep hours</h2><p class="hub-muted">Choose when the screen sleeps and wakes each day.</p><fieldset class="hub-sleep-controls" ${item.snapshot.display ? '' : 'disabled'}>${toggle('sleepEnabled', 'Sleep on a schedule', 'Turn off the screen during these hours')}<div class="hub-fields">${field('sleepStart', 'Sleep at')}${field('sleepEnd', 'Wake at')}</div></fieldset><p class="hub-muted" data-display-status>${e(displayMessage(item.snapshot.display))}</p><p class="hub-muted">The schedule stays on the Pi, so it still wakes when Hub is unavailable. Turn off the schedule to wake the screen early.</p>`;
     const agent = item.snapshot.update.agentSeenAt && Date.now() - Date.parse(item.snapshot.update.agentSeenAt) < 180_000;
     const result = item.snapshot.update.result;
     return `<h2>Advanced settings</h2>${field('name', 'Frame name')}<div class="hub-fields">${field('resolution', 'Display target', [['4k', '4K'], ['1080p', '1080p']])}${field('videoSource', 'Video source', [['original', 'Original quality'], ['immich', 'Immich playback copy']])}</div><p class="hub-muted">Photos stay full size. The display target checks detail; it does not change your monitor’s resolution.</p>${toggle('livePhotos', 'Play Live Photo motion')}<div class="hub-fields">${field('preloadCount', 'Preload ahead', undefined, 1, 5)}${field('preloadMegabytes', 'Download cache', [['128', '128 MB'], ['256', '256 MB'], ['512', '512 MB'], ['1024', '1 GB']])}</div>${field('refreshSeconds', 'Check albums every (seconds)', undefined, 15, 3600)}<div class="hub-divider"></div><h3>Frame software</h3><p class="hub-muted" data-update-status>Version ${e(item.snapshot.version)}${result ? ` · ${e(result.message || result.state)}` : ''}</p><button class="hub-button" type="button" data-action="update" ${!agent || busy.has(item.id) ? 'disabled' : ''}>Check for an update</button><p class="hub-muted">${agent ? 'Settings apply live. A software update briefly reloads the frame.' : 'Run the latest Pi setup script once to enable updates from Hub.'}</p><details><summary>Connection</summary><p class="hub-muted">${e(item.address)}</p><a class="hub-text-button" href="${e(item.address)}" target="_blank" rel="noopener">Open this frame directly ↗</a></details><button class="hub-text-button hub-danger" type="button" data-action="remove">Remove from Hub</button>`;
@@ -90,7 +94,7 @@ export async function showHub(root: HTMLElement) {
       content.innerHTML = `<div class="hub-page-title"><h1>Your Frames</h1><button class="hub-button hub-primary" data-action="add">${icon('plus')} Add Frame</button></div>${!state.satellites.length ? '<section class="hub-empty"><h2>Your frames, in one place.</h2><p>Add a frame using its IP address to get started.</p><button class="hub-button hub-primary" data-action="add">Add Frame</button></section>' : `<div class="hub-grid">${state.satellites.map(s => `<article class="hub-card" data-card="${s.id}"><button class="hub-preview-link" data-open="${s.id}" aria-label="Customize ${e(s.snapshot.name)}">${preview(s)}</button><div class="hub-card-body"><div class="hub-card-title"><h2 data-name="${s.id}">${e(s.snapshot.name)}</h2><span class="hub-status" data-status="${s.id}">${status(s)}</span></div><p class="hub-muted" data-count="${s.id}">${s.snapshot.settings.albumIds.length} albums selected</p><div class="hub-card-actions">${transport(s)}<button class="hub-button" data-open="${s.id}">Customize</button></div></div></article>`).join('')}</div>`}`;
     } else {
       const s = record()!;
-      content.innerHTML = `<button class="hub-text-button hub-back" data-action="home">${icon('back')} Your Frames</button><div class="hub-page-title"><h1 data-name="${s.id}">${e(s.snapshot.name)}</h1><span class="hub-status" data-status="${s.id}">${status(s)}</span></div><div class="hub-detail"><section class="hub-view">${preview(s, true)}${transport(s)}<p class="hub-muted hub-preview-note">This is the view reported by your frame, refreshed every two seconds.</p></section><section class="hub-panel"><nav class="hub-tabs" aria-label="Frame settings">${['albums', 'style', 'advanced'].map(t => `<button data-tab="${t}" aria-current="${tab === t ? 'page' : 'false'}">${t[0]!.toUpperCase() + t.slice(1)}</button>`).join('')}</nav><form class="hub-form">${editor()}</form><p class="hub-save-status" role="status">${s.pendingSettings ? 'Saved in Hub · waiting for frame' : 'Changes save automatically'}</p></section></div>`;
+      content.innerHTML = `<button class="hub-text-button hub-back" data-action="home">${icon('back')} Your Frames</button><div class="hub-page-title"><h1 data-name="${s.id}">${e(s.snapshot.name)}</h1><span class="hub-status" data-status="${s.id}">${status(s)}</span></div><div class="hub-detail"><section class="hub-view">${preview(s, true)}${transport(s)}<p class="hub-muted hub-preview-note">This is the view reported by your frame, refreshed every two seconds.</p></section><section class="hub-panel"><nav class="hub-tabs" aria-label="Frame settings">${['albums', 'style', 'sleep', 'advanced'].map(t => `<button data-tab="${t}" aria-current="${tab === t ? 'page' : 'false'}">${t[0]!.toUpperCase() + t.slice(1)}</button>`).join('')}</nav><form class="hub-form">${editor()}</form><p class="hub-save-status" role="status">${s.pendingSettings ? 'Saved in Hub · waiting for frame' : 'Changes save automatically'}</p></section></div>`;
     }
     const list = content.querySelector('.hub-albums'); if (list) list.scrollTop = scroll;
     if (focusName) content.querySelector<HTMLInputElement>(`[name="${CSS.escape(focusName)}"]`)?.focus({ preventScroll: true });
@@ -107,7 +111,7 @@ export async function showHub(root: HTMLElement) {
         if (node.dataset.transportState !== `${s.snapshot.playback?.paused}:${busy.has(s.id)}:${online(s)}:${s.snapshot.name}`) node.outerHTML = transport(s);
       });
       const label = root.querySelector(`[data-preview="${s.id}"] .hub-preview-status`);
-      if (label) label.textContent = !online(s) ? 'Last view · frame offline' : Date.now() - (previewTimes.get(s.id) ?? 0) > 6000 ? 'Waiting for a fresh view' : 'Live view · updates every 2s';
+      if (label) label.textContent = asleep(s) ? 'Sleeping · last view' : !online(s) ? 'Last view · frame offline' : Date.now() - (previewTimes.get(s.id) ?? 0) > 6000 ? 'Waiting for a fresh view' : 'Live view · updates every 2s';
     }
     if (selected && record() && !saves.has(selected) && !drafts.has(selected)) {
       const s = settings();
@@ -127,6 +131,10 @@ export async function showHub(root: HTMLElement) {
       }
       const updateStatus = root.querySelector('[data-update-status]');
       const remote = record()!.snapshot;
+      const displayStatus = root.querySelector('[data-display-status]');
+      if (displayStatus) displayStatus.textContent = displayMessage(remote.display);
+      const sleepControls = root.querySelector<HTMLFieldSetElement>('.hub-sleep-controls');
+      if (sleepControls) sleepControls.disabled = !remote.display;
       if (updateStatus) updateStatus.textContent = `Version ${remote.version}${remote.update.result ? ` · ${remote.update.result.message || remote.update.result.state}` : ''}`;
       const updateButton = root.querySelector<HTMLButtonElement>('[data-action="update"]');
       if (updateButton) updateButton.disabled = !remote.update.agentSeenAt || Date.now() - Date.parse(remote.update.agentSeenAt) > 180_000 || busy.has(selected);
@@ -137,7 +145,7 @@ export async function showHub(root: HTMLElement) {
     if (document.hidden) return;
     for (const node of root.querySelectorAll<HTMLElement>('[data-preview]')) {
       const id = node.dataset.preview!;
-      if (previewBusy.has(id) || record(id)?.error) continue;
+      if (previewBusy.has(id) || record(id)?.error || (record(id) && asleep(record(id)!))) continue;
       previewBusy.add(id);
       void fetch(`/api/${path(id, 'preview')}`, { signal: AbortSignal.timeout(5000) }).then(async response => {
         if (!response.ok || response.status === 204 || !response.headers.get('content-type')?.startsWith('image/')) return;

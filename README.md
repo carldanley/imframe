@@ -12,9 +12,10 @@ Connect a Raspberry Pi to a monitor and let your photos play. Use **Hub** on you
 | **Albums** | Pick several albums. Mix them together or play one at a time. Shuffle, play oldest first, or play newest first. |
 | **Media** | Full-size photos, videos, and Live Photos. Live Photo motion fades into the still before the photo timer starts. |
 | **Style** | Pan and zoom, adjustable transitions, blurred backgrounds, and optional location, date, and countdown displays. |
+| **Sleep hours** | Set daily sleep and wake times for each screen. The Pi stays online and keeps the schedule if Hub is unavailable. |
 | **Everyday use** | Start fullscreen when the Pi boots. Preload upcoming media. Change settings without restarting playback. |
 
-Hub has a simple **Albums / Style / Advanced** layout. Each frame also keeps its own settings page and works when Hub is offline. Previews are small snapshots from the running player, refreshed about every two seconds.
+Hub has a simple **Albums / Style / Sleep / Advanced** layout. Each frame also keeps its own settings page and works when Hub is offline. Previews are small snapshots from the running player, refreshed about every two seconds.
 
 ## Set it up
 
@@ -56,7 +57,7 @@ Changes save automatically. Keep managing your photos and albums in Immich. On i
 
 Choose **When I ask** or **Automatically, once a day** in Hub settings. Automatic updates run one frame at a time. Frames outside Hub check for updates themselves every 15 minutes.
 
-The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.2` for the `0.2.x` series, or `:0.2.1` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
+The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.3` for the `0.3.x` series, or `:0.3.0` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
 
 ## Try it locally
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=imframe scheduled screen sleep
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/python3 %h/.local/libexec/imframe/display.py
+ExecStopPost=/usr/bin/python3 %h/.local/libexec/imframe/display.py --wake
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true

@@ -26,6 +26,9 @@ export interface FrameSettings {
   progressStyle: 'off' | 'bar' | 'ring';
   progressPosition: 'top' | 'bottom' | 'left' | 'right';
   progressCorner: LocationCorner;
+  sleepEnabled: boolean;
+  sleepStart: string;
+  sleepEnd: string;
 }
 
 export const defaults: FrameSettings = {
@@ -38,6 +41,7 @@ export const defaults: FrameSettings = {
   showLocation: false, locationCorner: 'bottom-left',
   showDate: false, dateCorner: 'top-left',
   progressStyle: 'off', progressPosition: 'bottom', progressCorner: 'bottom-right',
+  sleepEnabled: false, sleepStart: '22:00', sleepEnd: '07:00',
 };
 
 export interface Album {
@@ -127,6 +131,15 @@ export function parseSettings(input: unknown): FrameSettings {
   const preloadMegabytes = p.preloadMegabytes === undefined ? defaults.preloadMegabytes : number('preloadMegabytes', 128, 1024);
   if (!Number.isInteger(preloadCount)) throw new Error('preloadCount must be a whole number.');
   if (![128, 256, 512, 1024].includes(preloadMegabytes)) throw new Error('Choose a supported preloadMegabytes limit.');
+  const sleepEnabled = p.sleepEnabled === undefined ? defaults.sleepEnabled : boolean('sleepEnabled');
+  const sleepTime = (key: 'sleepStart' | 'sleepEnd') => {
+    const value = p[key] === undefined ? defaults[key] : p[key];
+    if (typeof value !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error('Use a valid sleep or wake time.');
+    return value;
+  };
+  const sleepStart = sleepTime('sleepStart');
+  const sleepEnd = sleepTime('sleepEnd');
+  if (sleepEnabled && sleepStart === sleepEnd) throw new Error('Sleep and wake times must be different.');
   return {
     schemaVersion: 1, name: p.name.trim(), albumIds: [...new Set(p.albumIds as string[])],
     playbackMode: choice('playbackMode', ['mixed', 'albums']), shuffleAlbums: boolean('shuffleAlbums'),
@@ -137,6 +150,7 @@ export function parseSettings(input: unknown): FrameSettings {
     resolution: choice('resolution', ['4k', '1080p']), videoSource: choice('videoSource', ['original', 'immich']),
     livePhotos: boolean('livePhotos'), refreshSeconds: number('refreshSeconds', 15, 3600),
     preloadCount, preloadMegabytes,
+    sleepEnabled, sleepStart, sleepEnd,
     // Older settings files remain valid; the next save persists the new fields.
     showLocation: p.showLocation === undefined ? defaults.showLocation : boolean('showLocation'),
     locationCorner: p.locationCorner === undefined ? defaults.locationCorner : choice('locationCorner', ['bottom-left', 'bottom-right', 'top-left', 'top-right']),
