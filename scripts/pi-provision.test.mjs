@@ -46,7 +46,7 @@ test('remote setup transfers only deployment files and the private env file', t 
   assert.equal(result.status, 0, result.stderr);
   const list = spawnSync('tar', ['-tf', archive], { encoding: 'utf8' });
   assert.equal(list.status, 0, list.stderr);
-  for (const file of ['display.py', 'imframe-display.service', 'upgrade-display.sh']) {
+  for (const file of ['display.py', 'imframe-display.service', 'upgrade-display.sh', 'install-display-tools.sh']) {
     assert.ok(list.stdout.includes(`./deploy/pi/${file}`), `Provisioning must include ${file}`);
   }
   for (const path of list.stdout.trim().split('\n')) {

@@ -18,6 +18,7 @@ exec "${IMFRAME_CHROMIUM:-/usr/bin/chromium}" "${platform[@]}" \
   --use-angle=gles --enable-gpu-rasterization \
   --user-data-dir="$profile_dir" \
   --password-store=basic \
+  --class=imframe \
   --kiosk --no-first-run --no-default-browser-check --noerrdialogs \
   --disable-session-crashed-bubble \
   'http://localhost:3000/frame?kiosk=1'

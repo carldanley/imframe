@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -72,6 +73,52 @@ def set_kiosk(running):
     return running
 
 
+def restore_kiosk_fullscreen():
+    # Chromium can lose fullscreen when it starts on labwc's temporary NOOP
+    # output during warmup. Repair only non-fullscreen frame windows after HDMI
+    # wakes; keeping the process alive preserves the prepared media and cache.
+    tool = shutil.which('wlrctl') or str(Path.home() / '.local/libexec/imframe/tools/usr/bin/wlrctl')
+    matches = [['app_id:imframe'],
+               # Also repair kiosks started before the dedicated app ID existed.
+               ['app_id:chromium-browser', 'app_id:chromium', 'title:imframe - Chromium']]
+    def command(action, match, state=None, timeout=5):
+        args = [tool, 'toplevel', action, *match]
+        if state:
+            args.append('state:' + state)
+        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        if result.returncode not in (0, 1) or (result.returncode == 1 and result.stderr.strip()):
+            raise RuntimeError('Could not restore the frame window to fullscreen.')
+        return result.returncode == 0
+
+    for match in matches:
+        # No match means the window is already fullscreen or still starting.
+        # Rechecking on later ticks also covers delayed HDMI reconnects.
+        if not command('fullscreen', match, 'unfullscreen'):
+            continue
+        try:
+            if command('waitfor', match, 'fullscreen', timeout=1):
+                continue
+        except subprocess.TimeoutExpired:
+            pass
+        # labwc may still associate the view with the removed NOOP output and
+        # silently ignore fullscreen. Remap that view onto the live output.
+        # Focusing in finally ensures a failed acknowledgement cannot strand
+        # the window minimized. No browser restart or page reload is needed.
+        if not command('minimize', match, 'unfullscreen'):
+            continue
+        try:
+            try:
+                command('waitfor', match, 'minimized', timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        finally:
+            command('focus', match)
+        command('waitfor', match, 'unminimized', timeout=2)
+        command('fullscreen', match, 'unfullscreen')
+        if not command('waitfor', match, 'fullscreen', timeout=2):
+            raise RuntimeError('The frame window did not enter fullscreen.')
+
+
 def exchange(report):
     request = urllib.request.Request('http://127.0.0.1:3000/api/display-agent',
                                      data=json.dumps(report).encode(),
@@ -87,10 +134,14 @@ def physical_outputs():
     return [output for output in json.loads(result.stdout) if not output['name'].startswith('NOOP-')]
 
 
-def power_states():
+def output_power():
     result = subprocess.run(['wlopm'], capture_output=True, text=True, check=True, timeout=5)
-    power = {match[1]: match[2] for line in result.stdout.splitlines()
-             if (match := re.fullmatch(r'(\S+)\s+(on|off)', line.strip()))}
+    return {match[1]: match[2] for line in result.stdout.splitlines()
+            if (match := re.fullmatch(r'(\S+)\s+(on|off)', line.strip()))}
+
+
+def power_states():
+    power = output_power()
     states = []
     for output in physical_outputs():
         if not output['enabled']:
@@ -143,6 +194,31 @@ def configure_labwc(path, defaults=Path('/etc/xdg/labwc/rc.xml')):
     temporary.replace(path)
 
 
+def configure_labwc_environment(path):
+    # The Pi's libliftoff patches can retain planes on a sleeping CRTC, then
+    # reject wake-up with drmCrtcGetSequence(EINVAL). Use wlroots' normal atomic
+    # backend; GPU rendering and Chromium's video decoder remain enabled.
+    original = path.read_text() if path.exists() else None
+    content = original or ''
+    setting = 'WLR_DRM_FORCE_LIBLIFTOFF=0'
+    pattern = r'^\s*WLR_DRM_FORCE_LIBLIFTOFF\s*=.*$'
+    if re.search(pattern, content, flags=re.MULTILINE):
+        content = re.sub(pattern, setting, content, flags=re.MULTILINE)
+    else:
+        content = content.rstrip('\n') + ('\n' if content else '') + '# imframe: keep HDMI sleep and wake reliable.\n' + setting + '\n'
+    if content == original:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.with_name(path.name + '.before-imframe-sleep')
+    if original is not None and not backup.exists():
+        backup.write_text(original)
+        backup.chmod(0o600)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(content)
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
 class DisplayOutputs:
     def __init__(self, path):
         self.path = path
@@ -189,8 +265,12 @@ class DisplayOutputs:
             signal_desktop('kanshi', 'STOP')
             return
         try:
+            power = output_power()
             for output in physical_outputs():
-                if output['enabled']:
+                # With automatic output enabling disabled, labwc can advertise
+                # an enabled HDMI head before adding it to the desktop layout.
+                # Until wlopm sees it, explicitly apply its mode to finish setup.
+                if output['enabled'] and output['name'] in power:
                     continue
                 saved = self.saved.get(output['name'], {})
                 mode = saved.get('mode')
@@ -292,6 +372,11 @@ class DisplayAgent:
         except (OSError, ValueError, subprocess.SubprocessError, RuntimeError):
             self.report['sleeping'] = None
             self.report['error'] = 'Screen power control is unavailable. Check the Pi desktop, wlopm, and wlr-randr installation.'
+        if self.report['sleeping'] is False and self.report['kioskRunning'] is True and phase == 'awake':
+            try:
+                restore_kiosk_fullscreen()
+            except (OSError, subprocess.SubprocessError, RuntimeError):
+                self.report['error'] = 'Could not restore the frame window to fullscreen. Check the Pi desktop and wlrctl installation.'
         if self.report != prior:
             try:
                 exchange(self.report)
@@ -330,7 +415,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     directory = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'imframe'
     if args.configure:
-        configure_labwc(Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'labwc/rc.xml')
+        config_directory = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'labwc'
+        configure_labwc(config_directory / 'rc.xml')
+        configure_labwc_environment(config_directory / 'environment')
     elif args.wake:
         wake(directory)
     elif args.cleanup:

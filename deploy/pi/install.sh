@@ -68,9 +68,9 @@ SOURCES
 fi
 docker compose version >/dev/null || fail 'Docker Compose v2 or newer is required. Install the Compose plugin for your Docker distribution.'
 command -v curl >/dev/null || apt-get install -y curl
-if ! command -v wlopm >/dev/null || ! command -v wlr-randr >/dev/null; then
+if ! command -v wlopm >/dev/null || ! command -v wlr-randr >/dev/null || ! command -v wlrctl >/dev/null; then
   apt-get update
-  apt-get install -y wlopm wlr-randr
+  apt-get install -y wlopm wlr-randr wlrctl
 fi
 
 install -d -m 0755 /opt/imframe

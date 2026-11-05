@@ -56,13 +56,17 @@ Two minutes before wake-up, Chromium starts with the screen still off. It prepar
 
 Some monitors briefly disconnect and reconnect while checking for a signal. Setup disables labwc’s automatic output enabling, and the display service suspends `kanshi` during sleep so those reconnects cannot wake the screen. It saves the display mode and restores it with `wlr-randr` at wake time, including the refresh rate. Existing labwc settings are retained, with a backup at `~/.config/labwc/rc.xml.before-imframe-sleep` when a user configuration already exists.
 
+Setup also selects wlroots’ standard atomic display backend to avoid a Raspberry Pi OS `libliftoff` failure that can leave HDMI black after sleep. Chromium’s GPU rendering and video decoding remain enabled. Existing desktop environment preferences are preserved and backed up. This setting takes effect after a desktop restart or reboot.
+
+After the monitor wakes, the display service restores the frame window to fullscreen if Chromium lost that state during warmup. Playback and the preloaded cache stay intact. It also finishes activating HDMI if the desktop detects the monitor before its output is ready.
+
 Fresh Pi setups include the display service. Existing frames need both the app update and the host service update for overnight idle. Run this from a current checkout **on the Pi as the desktop user, without sudo**:
 
 ```sh
 bash deploy/pi/upgrade-display.sh
 ```
 
-The upgrade preserves sleep during an overnight service restart.
+The upgrade preserves sleep during an overnight service restart. If `wlrctl` is missing, it downloads the package from the Pi’s configured apt repositories into the desktop user’s directory; no sudo is needed. Fresh provisioning installs it as a system package.
 
 If either display tool is missing, install them with `sudo apt-get install wlopm wlr-randr` first. Re-running the normal Pi provisioner also installs the service; reboot afterward. No Docker socket or display access is added to the app container.
 

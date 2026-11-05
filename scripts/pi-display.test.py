@@ -25,6 +25,7 @@ class DisplayTests(unittest.TestCase):
     def setUp(self):
         self.output_guard = patch.object(display.DisplayOutputs, 'prepare').start()
         self.kiosk = patch.object(display, 'set_kiosk', side_effect=lambda running: running).start()
+        self.fullscreen = patch.object(display, 'restore_kiosk_fullscreen').start()
         self.addCleanup(patch.stopall)
 
     def test_overnight_window_and_exact_boundaries(self):
@@ -48,6 +49,26 @@ class DisplayTests(unittest.TestCase):
             self.assertEqual([call.args for call in self.kiosk.call_args_list], [(False,), (True,), (True,)])
             self.assertEqual([call.args for call in self.output_guard.call_args_list], [(True,), (True,), (False,)])
             power.assert_called_once_with(False)
+            self.fullscreen.assert_called_once_with()
+
+    def test_fullscreen_rechecks_delayed_windows_without_restarting_playback_or_power(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display, 'exchange', return_value=NIGHT), \
+             patch.object(display, 'power_states', return_value=['on']), patch.object(display, 'set_power') as power:
+            agent = display.DisplayAgent(Path(directory) / 'display.json')
+            for time in ['07:00:00', '07:00:10', '07:00:20']:
+                agent.tick(at(time))
+            self.assertEqual(self.fullscreen.call_count, 3)
+            power.assert_not_called()
+
+    def test_fullscreen_failure_does_not_misreport_physical_display_power(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display, 'exchange', return_value=NIGHT), \
+             patch.object(display, 'power_states', return_value=['on']):
+            self.fullscreen.side_effect = FileNotFoundError('wlrctl missing')
+            agent = display.DisplayAgent(Path(directory) / 'display.json')
+            agent.tick(at('12:00'))
+            self.assertFalse(agent.report['sleeping'])
+            self.assertTrue(agent.report['kioskRunning'])
+            self.assertIn('fullscreen', agent.report['error'])
 
     def test_browser_stops_even_if_display_control_is_unavailable(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(display, 'exchange', return_value=NIGHT), \
@@ -180,6 +201,66 @@ def monitor(enabled=True, refresh=100.0):
 
 
 class ReconnectTests(unittest.TestCase):
+    def setUp(self):
+        self.power = patch.object(display, 'output_power', return_value={'HDMI-A-1': 'on'}).start()
+        self.addCleanup(patch.stopall)
+
+    def test_display_backend_configuration_preserves_preferences_and_original_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'environment'
+            original = '# personal settings\nXCURSOR_SIZE=32\nWLR_DRM_FORCE_LIBLIFTOFF=1\n'
+            path.write_text(original)
+            display.configure_labwc_environment(path)
+            configured = '# personal settings\nXCURSOR_SIZE=32\nWLR_DRM_FORCE_LIBLIFTOFF=0\n'
+            self.assertEqual(path.read_text(), configured)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            display.configure_labwc_environment(path)
+            self.assertEqual(path.read_text(), configured)
+            self.assertEqual(path.with_name('environment.before-imframe-sleep').read_text(), original)
+
+    def test_fresh_display_backend_configuration_does_not_disable_gpu_or_video_acceleration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'labwc/environment'
+            display.configure_labwc_environment(path)
+            self.assertEqual([line for line in path.read_text().splitlines() if not line.startswith('#')], ['WLR_DRM_FORCE_LIBLIFTOFF=0'])
+            self.assertFalse(path.with_name('environment.before-imframe-sleep').exists())
+
+    def test_fullscreen_targets_only_non_fullscreen_frame_windows(self):
+        with patch.object(display.shutil, 'which', return_value='/usr/bin/wlrctl'), \
+             patch.object(display.subprocess, 'run', side_effect=[SimpleNamespace(returncode=0, stderr=''), SimpleNamespace(returncode=0, stderr=''), SimpleNamespace(returncode=1, stderr='')]) as run:
+            display.restore_kiosk_fullscreen()
+            self.assertEqual([call.args[0] for call in run.call_args_list], [
+                ['/usr/bin/wlrctl', 'toplevel', 'fullscreen', 'app_id:imframe', 'state:unfullscreen'],
+                ['/usr/bin/wlrctl', 'toplevel', 'waitfor', 'app_id:imframe', 'state:fullscreen'],
+                ['/usr/bin/wlrctl', 'toplevel', 'fullscreen', 'app_id:chromium-browser', 'app_id:chromium', 'title:imframe - Chromium', 'state:unfullscreen']])
+
+    def test_ignored_fullscreen_request_remaps_stale_output_and_verifies_recovery(self):
+        ok = SimpleNamespace(returncode=0, stderr='')
+        with patch.object(display.shutil, 'which', return_value='/usr/bin/wlrctl'), \
+             patch.object(display.subprocess, 'run', side_effect=[ok, subprocess.TimeoutExpired('wlrctl', 1), ok, ok, ok, ok, ok, ok, SimpleNamespace(returncode=1, stderr='')]) as run:
+            display.restore_kiosk_fullscreen()
+            self.assertEqual([(call.args[0][2], call.args[0][-1]) for call in run.call_args_list[:8]], [
+                ('fullscreen', 'state:unfullscreen'), ('waitfor', 'state:fullscreen'),
+                ('minimize', 'state:unfullscreen'), ('waitfor', 'state:minimized'),
+                ('focus', 'app_id:imframe'), ('waitfor', 'state:unminimized'),
+                ('fullscreen', 'state:unfullscreen'), ('waitfor', 'state:fullscreen')])
+
+    def test_remap_still_focuses_window_after_missing_minimize_acknowledgement(self):
+        ok = SimpleNamespace(returncode=0, stderr='')
+        timeout = subprocess.TimeoutExpired('wlrctl', 1)
+        with patch.object(display.shutil, 'which', return_value='/usr/bin/wlrctl'), \
+             patch.object(display.subprocess, 'run', side_effect=[ok, timeout, ok, timeout, ok, ok, ok, timeout]) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                display.restore_kiosk_fullscreen()
+            self.assertEqual(run.call_args_list[4].args[0], ['/usr/bin/wlrctl', 'toplevel', 'focus', 'app_id:imframe'])
+
+    def test_fullscreen_supports_user_installed_tool_and_reports_protocol_failure(self):
+        with patch.object(display.shutil, 'which', return_value=None), \
+             patch.object(display.subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr='Wayland protocol unavailable')) as run:
+            with self.assertRaises(RuntimeError):
+                display.restore_kiosk_fullscreen()
+            self.assertEqual(run.call_args.args[0][0], str(Path.home() / '.local/libexec/imframe/tools/usr/bin/wlrctl'))
+
     def test_overnight_service_cleanup_stays_dark_and_stops_browser(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(display.DisplayOutputs, 'prepare') as prepare, \
              patch.object(display, 'set_power') as power, patch.object(display, 'set_kiosk') as kiosk, \
@@ -233,10 +314,24 @@ class ReconnectTests(unittest.TestCase):
             signals.assert_called_with('kanshi', 'CONT')
 
     def test_virtual_fallback_does_not_count_as_an_awake_monitor(self):
-        responses = [SimpleNamespace(stdout='NOOP-1 on\n'), SimpleNamespace(stdout=json.dumps([
-            monitor(enabled=False), {'name': 'NOOP-1', 'enabled': True}]))]
-        with patch.object(display.subprocess, 'run', side_effect=responses):
+        self.power.return_value = {'NOOP-1': 'on'}
+        response = SimpleNamespace(stdout=json.dumps([monitor(enabled=False), {'name': 'NOOP-1', 'enabled': True}]))
+        with patch.object(display.subprocess, 'run', return_value=response):
             self.assertEqual(display.power_states(), ['off'])
+
+    def test_enabled_but_unconfigured_hdmi_is_restored_without_resetting_healthy_outputs(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display, 'signal_desktop'), \
+             patch.object(display, 'physical_outputs', return_value=[monitor()]), \
+             patch.object(display.subprocess, 'run') as run:
+            guard = display.DisplayOutputs(Path(directory) / 'outputs.json')
+            guard.remember([monitor()])
+            self.power.return_value = {'NOOP-1': 'on'}
+            guard.prepare(False)
+            self.assertIn('1920x1080@100.0Hz', run.call_args.args[0])
+            self.power.return_value = {'HDMI-A-1': 'on'}
+            run.reset_mock()
+            guard.prepare(False)
+            run.assert_not_called()
 
     def test_new_monitor_uses_preferred_mode_and_resumes_managers(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(display, 'signal_desktop') as signals, \
