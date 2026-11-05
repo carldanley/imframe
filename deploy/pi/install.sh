@@ -68,9 +68,9 @@ SOURCES
 fi
 docker compose version >/dev/null || fail 'Docker Compose v2 or newer is required. Install the Compose plugin for your Docker distribution.'
 command -v curl >/dev/null || apt-get install -y curl
-if ! command -v wlopm >/dev/null; then
+if ! command -v wlopm >/dev/null || ! command -v wlr-randr >/dev/null; then
   apt-get update
-  apt-get install -y wlopm
+  apt-get install -y wlopm wlr-randr
 fi
 
 install -d -m 0755 /opt/imframe
@@ -98,6 +98,7 @@ install -d -m 0755 -o "$frame_user" -g "$frame_group" \
   "$frame_home/.local/libexec/imframe" "$frame_home/.config/systemd/user" "$frame_home/.config/imframe"
 install -m 0755 -o "$frame_user" -g "$frame_group" "$source_dir/kiosk.sh" "$source_dir/session.sh" "$source_dir/display.py" "$frame_home/.local/libexec/imframe/"
 install -m 0644 -o "$frame_user" -g "$frame_group" "$source_dir/imframe-kiosk.service" "$source_dir/imframe-display.service" "$frame_home/.config/systemd/user/"
+runuser -u "$frame_user" -- python3 "$frame_home/.local/libexec/imframe/display.py" --configure
 if [[ $browser == hevc ]]; then
   # Keep the installer accessible even when this checkout is inside /root.
   install -m 0644 -o "$frame_user" -g "$frame_group" "$source_dir/install-browser.py" "$source_dir/chromium-hevc.json" "$frame_home/.local/libexec/imframe/"

@@ -4,6 +4,7 @@ import argparse
 import datetime
 import fcntl
 import json
+import math
 import os
 import re
 import signal
@@ -11,6 +12,7 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 DEFAULTS = {'sleepEnabled': False, 'sleepStart': '22:00', 'sleepEnd': '07:00'}
@@ -48,12 +50,25 @@ def exchange(report):
         return json.load(response)
 
 
+def physical_outputs():
+    result = subprocess.run(['wlr-randr', '--json'], capture_output=True, text=True, check=True, timeout=5)
+    # labwc creates this virtual output while HDMI is disconnected/disabled.
+    # Its power state says nothing about the actual monitor.
+    return [output for output in json.loads(result.stdout) if not output['name'].startswith('NOOP-')]
+
+
 def power_states():
     result = subprocess.run(['wlopm'], capture_output=True, text=True, check=True, timeout=5)
-    states = [match[2] for line in result.stdout.splitlines()
-              if (match := re.fullmatch(r'(\S+)\s+(on|off)', line.strip()))]
-    if not states:
-        raise RuntimeError('No display is connected to the Pi desktop.')
+    power = {match[1]: match[2] for line in result.stdout.splitlines()
+             if (match := re.fullmatch(r'(\S+)\s+(on|off)', line.strip()))}
+    states = []
+    for output in physical_outputs():
+        if not output['enabled']:
+            states.append('off')
+        elif output['name'] in power:
+            states.append(power[output['name']])
+        else:
+            raise RuntimeError('The display changed while reading its power state.')
     return states
 
 
@@ -61,6 +76,115 @@ def set_power(sleeping):
     # DPMS preserves output mode/layout. Disabling an output with wlr-randr does not.
     subprocess.run(['wlopm', '--off' if sleeping else '--on', '*'],
                    capture_output=True, text=True, check=True, timeout=5)
+
+
+def signal_desktop(program, event):
+    result = subprocess.run(['pkill', f'-{event}', '-u', str(os.getuid()), '-x', program],
+                            capture_output=True, text=True, timeout=5)
+    # No matching process is normal, including when the desktop is shutting down.
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f'Could not signal {program}.')
+
+
+def configure_labwc(path, defaults=Path('/etc/xdg/labwc/rc.xml')):
+    """Let the display service and output profiles control HDMI reconnects."""
+    original = path.read_bytes() if path.exists() else None
+    source = original if original is not None else defaults.read_bytes() if defaults.exists() else b'<labwc_config/>'
+    root = ET.fromstring(source, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
+    namespace = root.tag.split('}')[0] + '}' if root.tag.startswith('{') else ''
+    if namespace:
+        ET.register_namespace('', namespace[1:-1])
+    core = root.find(namespace + 'core')
+    if core is None:
+        core = ET.SubElement(root, namespace + 'core')
+    option = core.find(namespace + 'autoEnableOutputs')
+    if option is not None and option.text == 'no':
+        return
+    if option is None:
+        option = ET.SubElement(core, namespace + 'autoEnableOutputs')
+    option.text = 'no'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.with_name(path.name + '.before-imframe-sleep')
+    if original is not None and not backup.exists():
+        backup.write_bytes(original)
+    temporary = path.with_suffix('.tmp')
+    ET.ElementTree(root).write(temporary, encoding='utf-8', xml_declaration=True)
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+class DisplayOutputs:
+    def __init__(self, path):
+        self.path = path
+        try:
+            saved = json.loads(path.read_text())
+            self.saved = {name: value for name, value in saved.items() if self.valid(value)} if isinstance(saved, dict) else {}
+        except (OSError, ValueError):
+            self.saved = {}
+
+    @staticmethod
+    def valid(value):
+        try:
+            mode, position = value['mode'], value['position']
+            return (all(type(mode[key]) is int and mode[key] > 0 for key in ('width', 'height'))
+                    and all(type(position[key]) is int for key in ('x', 'y'))
+                    and all(isinstance(number, (int, float)) and not isinstance(number, bool)
+                            and math.isfinite(number) and number > 0 for number in (mode['refresh'], value['scale']))
+                    and value['transform'] in ('normal', '90', '180', '270', 'flipped', 'flipped-90', 'flipped-180', 'flipped-270')
+                    and type(value['adaptive_sync']) is bool)
+        except (KeyError, TypeError):
+            return False
+
+    def remember(self, outputs):
+        saved = dict(self.saved)
+        for output in outputs:
+            mode = next((mode for mode in output['modes'] if mode['current']), None)
+            if output['enabled'] and mode:
+                saved[output['name']] = {key: output[key] for key in ('position', 'transform', 'scale', 'adaptive_sync')}
+                saved[output['name']]['mode'] = {key: mode[key] for key in ('width', 'height', 'refresh')}
+        if saved == self.saved:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = self.path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(saved) + '\n')
+        temporary.chmod(0o600)
+        temporary.replace(self.path)
+        self.saved = saved
+
+    def prepare(self, sleeping):
+        if sleeping:
+            # Save the real mode before the monitor's input detection makes it
+            # disappear. Suspend every copy: merged labwc autostart can run two.
+            self.remember(physical_outputs())
+            signal_desktop('kanshi', 'STOP')
+            return
+        try:
+            for output in physical_outputs():
+                if output['enabled']:
+                    continue
+                saved = self.saved.get(output['name'], {})
+                mode = saved.get('mode')
+                supported = any(all(mode and abs(candidate[key] - mode[key]) < 0.01
+                                    for key in ('width', 'height', 'refresh')) for candidate in output['modes'])
+                command = ['wlr-randr', '--output', output['name'], '--on']
+                if supported:
+                    command += ['--mode', f"{mode['width']}x{mode['height']}@{mode['refresh']}Hz",
+                                '--pos', f"{saved['position']['x']},{saved['position']['y']}",
+                                '--transform', saved['transform'], '--scale', str(saved['scale']),
+                                '--adaptive-sync', 'enabled' if saved['adaptive_sync'] else 'disabled']
+                else:
+                    # A new monitor or first boot has no saved mode yet.
+                    command += ['--preferred']
+                subprocess.run(command, capture_output=True, text=True, check=True, timeout=5)
+        finally:
+            # Also recover managers left stopped by a crash or service restart.
+            signal_desktop('kanshi', 'CONT')
+        self.remember(physical_outputs())
+
+
+def wake(directory):
+    DisplayOutputs(directory / 'outputs.json').prepare(False)
+    set_power(False)
 
 
 def time_zone():
@@ -77,6 +201,7 @@ class DisplayAgent:
             self.config = schedule(json.loads(path.read_text()))
         except (OSError, ValueError):
             self.config = dict(DEFAULTS)
+        self.outputs = DisplayOutputs(path.parent / 'outputs.json')
         self.report = {'sleeping': None, 'timeZone': time_zone(), 'error': None}
 
     def save(self, config):
@@ -106,15 +231,18 @@ class DisplayAgent:
         try:
             desired = should_sleep(self.config, now or datetime.datetime.now().astimezone())
             target = 'off' if desired else 'on'
+            self.outputs.prepare(desired)
             states = power_states()
+            if not states and not desired:
+                raise RuntimeError('No physical display is connected.')
             if any(state != target for state in states):
                 set_power(desired)
                 states = power_states()
             self.report['sleeping'] = all(state == 'off' for state in states)
             self.report['error'] = cache_error if all(state == target for state in states) else 'The screen did not switch power state. Check the Pi display connection.'
-        except (OSError, subprocess.SubprocessError, RuntimeError):
+        except (OSError, ValueError, subprocess.SubprocessError, RuntimeError):
             self.report['sleeping'] = None
-            self.report['error'] = 'Screen power control is unavailable. Check the Pi desktop and wlopm installation.'
+            self.report['error'] = 'Screen power control is unavailable. Check the Pi desktop, wlopm, and wlr-randr installation.'
         if self.report != prior:
             try:
                 exchange(self.report)
@@ -122,14 +250,14 @@ class DisplayAgent:
                 pass
 
 
-def run():
-    directory = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'imframe'
+def run(directory):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (directory / 'display.lock').open('w') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return
+        signal_desktop('labwc', 'HUP')
         agent = DisplayAgent(directory / 'display.json')
         stopping = threading.Event()
         for event in (signal.SIGTERM, signal.SIGINT):
@@ -139,14 +267,20 @@ def run():
                 agent.tick()
                 stopping.wait(10)
         finally:
-            set_power(False)
+            wake(directory)
 
 
 if __name__ == '__main__':
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wake', action='store_true', help='Restore screen power when the service stops.')
-    if parser.parse_args().wake:
-        set_power(False)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument('--wake', action='store_true', help='Restore screen power when the service stops.')
+    action.add_argument('--configure', action='store_true', help='Prevent labwc from waking sleeping HDMI outputs on reconnect.')
+    args = parser.parse_args()
+    directory = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'imframe'
+    if args.configure:
+        configure_labwc(Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'labwc/rc.xml')
+    elif args.wake:
+        wake(directory)
     else:
-        run()
+        run(directory)

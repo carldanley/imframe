@@ -50,7 +50,9 @@ Files that exceed the available cache space stream normally. If a download is un
 
 In Hub, open a frame and choose **Sleep**, or use **Sleep hours** on the frame’s own settings page. Set **Sleep at** and **Wake at**, then enable **Sleep on a schedule**. It is off by default. Hours repeat daily in the Pi’s local time zone, including daylight-saving changes. Overnight windows work automatically; sleep and wake times must differ.
 
-The Pi uses `wlopm` to switch display power off without removing the monitor from the desktop. A monitor that supports standby can then sleep. The Pi and app keep running. Each Pi saves its schedule locally, so waking does not depend on Hub, a working network, or the app container. Turning off the schedule wakes the screen within about 15 seconds.
+The Pi uses `wlopm` to switch display power off. A monitor that supports standby can then sleep. The Pi and app keep running. Each Pi saves its schedule locally, so waking does not depend on Hub, a working network, or the app container. Turning off the schedule wakes the screen within about 15 seconds.
+
+Some monitors briefly disconnect and reconnect while checking for a signal. Setup disables labwc’s automatic output enabling, and the display service suspends `kanshi` during sleep so those reconnects cannot wake the screen. It saves the display mode and restores it with `wlr-randr` at wake time, including the refresh rate. Existing labwc settings are retained, with a backup at `~/.config/labwc/rc.xml.before-imframe-sleep` when a user configuration already exists.
 
 Fresh Pi setups include the display service. For an existing frame, update its app and run this from a current checkout **on the Pi as the desktop user, without sudo**:
 
@@ -58,7 +60,7 @@ Fresh Pi setups include the display service. For an existing frame, update its a
 bash deploy/pi/upgrade-display.sh
 ```
 
-If `wlopm` is missing, install it with `sudo apt-get install wlopm` first. Re-running the normal Pi provisioner also installs the service; reboot afterward. No Docker socket or display access is added to the app container.
+If either display tool is missing, install them with `sudo apt-get install wlopm wlr-randr` first. Re-running the normal Pi provisioner also installs the service; reboot afterward. No Docker socket or display access is added to the app container.
 
 ## Raspberry Pi fullscreen startup
 
@@ -149,7 +151,7 @@ The Pi installer enables an agent that checks for Hub requests about once a minu
 | `:latest` | Follow the newest stable release, including new major versions |
 | `:0.3` | Follow patch releases in the `0.3.x` series |
 | `:1` | Follow stable releases in major version 1 (available from 1.0 onward) |
-| `:0.3.0` | Stay on that specific release until you change the tag |
+| `:0.3.1` | Stay on that specific release until you change the tag |
 | `:0.3.0-rc.1` | Test that specific prerelease |
 
 These are examples; each tag becomes available after its release is published. For example, `IMFRAME_IMAGE=ghcr.io/carldanley/imframe:0.3` keeps a frame on `0.3.x` while still receiving patch updates. New installs default to `latest`. The same tags work with the provisioner's `--image` option.
