@@ -38,19 +38,21 @@ test('sleep hours reject malformed times and equal active boundaries', () => {
   assert.equal(parseSettings({ ...defaults, sleepStart: '00:00' }).sleepStart, '00:00');
 });
 
-test('display state requires a recent host report and never survives as a false healthy state', t => {
+test('display state requires a recent host report and never survives as a false healthy state', async t => {
   const satellite = new SatelliteRuntime();
   assert.equal(satellite.info(defaults).display?.connected, false);
-  assert.deepEqual(satellite.displayAgent(report, defaults), { sleepEnabled: false, sleepStart: '22:00', sleepEnd: '07:00' });
+  assert.deepEqual(await satellite.displayAgent(report, defaults), { sleepEnabled: false, sleepStart: '22:00', sleepEnd: '07:00', power: { phase: 'awake', warmupSeconds: 120 } });
   assert.equal(satellite.info(defaults).display?.connected, true);
   assert.equal(satellite.info(defaults).display?.sleeping, true);
   const now = Date.now(); t.mock.method(Date, 'now', () => now + 46_000);
   assert.equal(satellite.info(defaults).display?.connected, false);
   assert.equal(new SatelliteRuntime().info(defaults).display?.connected, false);
-  assert.throws(() => satellite.displayAgent({ ...report, sleeping: 'yes' }, defaults), /Invalid display report/);
+  await assert.rejects(satellite.displayAgent({ ...report, sleeping: 'yes' }, defaults), /Invalid display report/);
+  await assert.rejects(satellite.displayAgent({ ...report, timeZone: 'invalid/zone' }, defaults), /Invalid display time zone/);
 });
 
 test('Hub can save sleep hours and receive physical display state through the satellite API', async t => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-11-05T05:00:00Z'));
   const dir = await mkdtemp(join(tmpdir(), 'imframe-sleep-api-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const settings = new SettingsStore(join(dir, 'satellite')); await settings.load();
   const satellite = new SatelliteRuntime();
@@ -63,8 +65,8 @@ test('Hub can save sleep hours and receive physical display state through the sa
   await hub.settings(frame.id, { sleepEnabled: true, sleepStart: '23:15', sleepEnd: '08:30' });
   const response = await fetch(`${address}/api/display-agent`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(report) });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { sleepEnabled: true, sleepStart: '23:15', sleepEnd: '08:30' });
-  assert.deepEqual((await hub.refresh(frame.id)).snapshot.display, { ...report, connected: true });
+  assert.deepEqual(await response.json(), { sleepEnabled: true, sleepStart: '23:15', sleepEnd: '08:30', power: { phase: 'sleeping', warmupSeconds: 120 } });
+  assert.deepEqual((await hub.refresh(frame.id)).snapshot.display, { ...report, phase: 'sleeping', connected: true });
   await hub.settings(frame.id, { sleepEnabled: false });
   assert.equal(settings.get().sleepEnabled, false);
 });

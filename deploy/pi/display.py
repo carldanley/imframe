@@ -14,8 +14,10 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 DEFAULTS = {'sleepEnabled': False, 'sleepStart': '22:00', 'sleepEnd': '07:00'}
+WARMUP_SECONDS = 120
 
 
 def schedule(value):
@@ -40,6 +42,34 @@ def should_sleep(config, now):
     start, end = minutes(config['sleepStart']), minutes(config['sleepEnd'])
     # Start is inclusive; wake time is exclusive. Overnight windows wrap midnight.
     return start <= current < end if start < end else current >= start or current < end
+
+
+def power_phase(config, now):
+    if not should_sleep(config, now):
+        return 'awake'
+    hour, minute = map(int, config['sleepEnd'].split(':'))
+    remaining = (hour * 3600 + minute * 60 - now.hour * 3600 - now.minute * 60 - now.second) % 86400
+    def later(seconds):
+        if now.tzinfo is None:
+            return now + datetime.timedelta(seconds=seconds)
+        return (now.astimezone(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)).astimezone(now.tzinfo)
+    if (remaining <= WARMUP_SECONDS and not should_sleep(config, later(remaining))) or not should_sleep(config, later(WARMUP_SECONDS)):
+        return 'warming'
+    return 'sleeping'
+
+
+def local_now():
+    return datetime.datetime.now(ZoneInfo(time_zone()))
+
+
+def set_kiosk(running):
+    result = subprocess.run(['systemctl', '--user', 'is-active', 'imframe-kiosk.service'],
+                            capture_output=True, text=True, timeout=5)
+    active = result.stdout.strip() in ('active', 'activating', 'reloading')
+    if active != running:
+        subprocess.run(['systemctl', '--user', 'start' if running else 'stop', 'imframe-kiosk.service'],
+                       capture_output=True, text=True, check=True, timeout=25)
+    return running
 
 
 def exchange(report):
@@ -187,6 +217,18 @@ def wake(directory):
     set_power(False)
 
 
+def cleanup(directory):
+    # Preserve scheduled darkness across service updates and restarts. Explicit
+    # --wake remains available for maintenance; the schedule resumes on startup.
+    agent = DisplayAgent(directory / 'display.json')
+    if should_sleep(agent.config, local_now()):
+        agent.outputs.prepare(True)
+        set_power(True)
+        set_kiosk(False)
+    else:
+        wake(directory)
+
+
 def time_zone():
     try:
         return str(Path('/etc/localtime').resolve().relative_to('/usr/share/zoneinfo'))
@@ -202,7 +244,7 @@ class DisplayAgent:
         except (OSError, ValueError):
             self.config = dict(DEFAULTS)
         self.outputs = DisplayOutputs(path.parent / 'outputs.json')
-        self.report = {'sleeping': None, 'timeZone': time_zone(), 'error': None}
+        self.report = {'sleeping': None, 'timeZone': time_zone(), 'error': None, 'kioskRunning': None}
 
     def save(self, config):
         if config == self.config and self.path.exists():
@@ -229,8 +271,11 @@ class DisplayAgent:
         prior = self.report.copy()
         self.report['timeZone'] = time_zone()
         try:
-            desired = should_sleep(self.config, now or datetime.datetime.now().astimezone())
+            phase = power_phase(self.config, now or local_now())
+            desired = phase != 'awake'
             target = 'off' if desired else 'on'
+            if phase == 'sleeping':
+                self.report['kioskRunning'] = set_kiosk(False)
             self.outputs.prepare(desired)
             states = power_states()
             if not states and not desired:
@@ -240,6 +285,10 @@ class DisplayAgent:
                 states = power_states()
             self.report['sleeping'] = all(state == 'off' for state in states)
             self.report['error'] = cache_error if all(state == target for state in states) else 'The screen did not switch power state. Check the Pi display connection.'
+            # Stopping Chromium releases its decoders, memory and network work.
+            # During warmup it starts behind the still-sleeping HDMI output.
+            if phase != 'sleeping':
+                self.report['kioskRunning'] = set_kiosk(True)
         except (OSError, ValueError, subprocess.SubprocessError, RuntimeError):
             self.report['sleeping'] = None
             self.report['error'] = 'Screen power control is unavailable. Check the Pi desktop, wlopm, and wlr-randr installation.'
@@ -267,7 +316,7 @@ def run(directory):
                 agent.tick()
                 stopping.wait(10)
         finally:
-            wake(directory)
+            cleanup(directory)
 
 
 if __name__ == '__main__':
@@ -276,11 +325,17 @@ if __name__ == '__main__':
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--wake', action='store_true', help='Restore screen power when the service stops.')
     action.add_argument('--configure', action='store_true', help='Prevent labwc from waking sleeping HDMI outputs on reconnect.')
+    action.add_argument('--cleanup', action='store_true', help='Leave the screen asleep during scheduled service updates.')
+    action.add_argument('--is-sleeping', action='store_true', help='Exit successfully when a sleep window is active.')
     args = parser.parse_args()
     directory = Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / 'imframe'
     if args.configure:
         configure_labwc(Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'labwc/rc.xml')
     elif args.wake:
         wake(directory)
+    elif args.cleanup:
+        cleanup(directory)
+    elif args.is_sleeping:
+        raise SystemExit(0 if should_sleep(DisplayAgent(directory / 'display.json').config, local_now()) else 1)
     else:
         run(directory)

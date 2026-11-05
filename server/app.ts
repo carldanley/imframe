@@ -9,29 +9,47 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
   const { immich, settings } = options;
   const satellite = options.satellite ?? new SatelliteRuntime();
   let libraryCache: { signature: string; expires: number; data: Library } | undefined;
-  let libraryPending: { signature: string; promise: Promise<Library> } | undefined;
+  let libraryPending: { signature: string; promise: Promise<Library>; controller: AbortController } | undefined;
   let playerReport: Record<string, unknown> | null = null;
+  const mediaRequests = new Set<AbortController>();
+
+  function syncPower() {
+    const power = satellite.powerChanged(settings.get());
+    if (power.phase === 'sleeping') {
+      libraryPending?.controller.abort();
+      for (const controller of mediaRequests) controller.abort();
+    }
+    return power;
+  }
+  function requireMedia() {
+    if (syncPower().phase === 'sleeping') throw new HttpError(423, 'This frame is sleeping. Media downloads resume before its scheduled wake time.');
+  }
 
   async function library(force: boolean): Promise<Library> {
+    requireMedia();
     const config = settings.get();
     const signature = JSON.stringify(config.albumIds);
     if (!force && libraryCache?.signature === signature && libraryCache.expires > Date.now()) return libraryCache.data;
-    if (libraryPending?.signature === signature) return libraryPending.promise;
+    if (libraryPending?.signature === signature && !libraryPending.controller.signal.aborted) return libraryPending.promise;
+    libraryPending?.controller.abort();
+    const controller = new AbortController();
     const promise = (async () => {
-      const available = config.albumIds.length ? await immich.albums() : [];
+      const available = config.albumIds.length ? await immich.albums(controller.signal) : [];
       const allowed = new Set(available.map(a => a.id));
       const warnings: string[] = [];
       const albums = [];
       // Keep requests bounded; a frame typically has only a few selected albums.
       for (const id of config.albumIds) {
         if (!allowed.has(id)) { warnings.push('A selected album was removed or is no longer shared with this account.'); continue; }
-        albums.push(await immich.albumMedia(id));
+        controller.signal.throwIfAborted();
+        albums.push(await immich.albumMedia(id, controller.signal));
       }
+      controller.signal.throwIfAborted();
       const data = { albums, warnings, refreshedAt: new Date().toISOString() };
       libraryCache = { signature, expires: Date.now() + config.refreshSeconds * 1000, data };
       return data;
     })();
-    libraryPending = { signature, promise };
+    libraryPending = { signature, promise, controller };
     try { return await promise; }
     finally { if (libraryPending?.promise === promise) libraryPending = undefined; }
   }
@@ -39,6 +57,7 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
   return createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://frame.local');
     try {
+      const power = syncPower();
       if (url.pathname === '/api/preview') {
         if (request.method === 'GET') {
           const image = satellite.getPreview();
@@ -61,6 +80,7 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
       }
       if (url.pathname === '/api/app') return json(response, 200, { mode: 'satellite', version: satellite.version });
       if (url.pathname === '/api/satellite' && request.method === 'GET') return json(response, 200, satellite.info(settings.get()));
+      if (url.pathname === '/api/power' && request.method === 'GET') return json(response, 200, power);
       if (url.pathname === '/api/events' && request.method === 'GET') return satellite.subscribe(response);
       if (url.pathname === '/api/commands' && request.method === 'POST') return json(response, 200, await satellite.command(await readJson(request)));
       const ack = url.pathname.match(/^\/api\/commands\/([^/]+)\/ack$/);
@@ -68,7 +88,11 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
       if (url.pathname === '/api/management' && request.method === 'PUT') return json(response, 200, await satellite.manage(await readJson(request)));
       if (url.pathname === '/api/update' && request.method === 'POST') return json(response, 202, await satellite.requestUpdate());
       if (url.pathname === '/api/update-agent' && request.method === 'POST') return json(response, 200, await satellite.agent(await readJson(request)));
-      if (url.pathname === '/api/display-agent' && request.method === 'POST') return json(response, 200, satellite.displayAgent(await readJson(request), settings.get()));
+      if (url.pathname === '/api/display-agent' && request.method === 'POST') {
+        const result = await satellite.displayAgent(await readJson(request), settings.get());
+        syncPower();
+        return json(response, 200, result);
+      }
       if (url.pathname === '/api/status' && request.method === 'GET') {
         const status: Status = { configured: immich.configured, connected: false, serverUrl: immich.base.href.replace(/\/api\/$/, ''), version: null, error: null, demo: options.demo ?? false };
         try {
@@ -89,6 +113,7 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
             throw new HttpError(400, (error as Error).message);
           }
           libraryCache = undefined;
+          syncPower();
           satellite.settingsChanged();
           return json(response, 200, saved);
         }
@@ -102,21 +127,25 @@ export function createApp(options: { immich: ImmichClient; settings: SettingsSto
           if (!report || typeof report !== 'object' || Array.isArray(report)) throw new HttpError(400, 'Invalid player report.');
           const receipt = 'sessionId' in report ? satellite.report(report) : { accepted: !satellite.online, commands: [] };
           if (receipt.accepted) playerReport = { ...report, reportedAt: new Date().toISOString() };
-          return json(response, 200, receipt);
+          return json(response, 200, { ...receipt, power: syncPower() });
         }
       }
       const media = url.pathname.match(/^\/api\/media\/([^/]+)\/(photo|thumbnail|video|original)$/);
       if (media && (request.method === 'GET' || request.method === 'HEAD')) {
         const [, id, kind] = media;
         if (!isId(id)) throw new HttpError(400, 'Invalid media ID.');
+        requireMedia();
         const controller = new AbortController();
+        mediaRequests.add(controller);
         response.on('close', () => controller.abort());
         // Abort the connection attempt without imposing a total duration limit on long videos.
         const timer = setTimeout(() => controller.abort(), 30_000);
-        let upstream: Response;
-        try { upstream = await immich.media(id, kind as 'photo' | 'thumbnail' | 'video' | 'original', request.headers.range, controller.signal); }
-        finally { clearTimeout(timer); }
-        await stream(upstream, response, request.method === 'HEAD');
+        try {
+          let upstream: Response;
+          try { upstream = await immich.media(id, kind as 'photo' | 'thumbnail' | 'video' | 'original', request.headers.range, controller.signal); }
+          finally { clearTimeout(timer); }
+          await stream(upstream, response, request.method === 'HEAD');
+        } finally { mediaRequests.delete(controller); }
         return;
       }
       await serveStatic(url, request, response, options.staticDir);

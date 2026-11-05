@@ -24,6 +24,7 @@ def at(time):
 class DisplayTests(unittest.TestCase):
     def setUp(self):
         self.output_guard = patch.object(display.DisplayOutputs, 'prepare').start()
+        self.kiosk = patch.object(display, 'set_kiosk', side_effect=lambda running: running).start()
         self.addCleanup(patch.stopall)
 
     def test_overnight_window_and_exact_boundaries(self):
@@ -36,6 +37,34 @@ class DisplayTests(unittest.TestCase):
         for time, expected in [('08:59', False), ('09:00', True), ('16:59', True), ('17:00', False), ('23:00', False)]:
             self.assertEqual(display.should_sleep(config, at(time)), expected)
         self.assertFalse(display.should_sleep({**NIGHT, 'sleepEnabled': False}, at('23:00')))
+
+    def test_warmup_holds_hdmi_off_but_starts_browser_then_wakes_on_schedule(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display, 'exchange', return_value=NIGHT), \
+             patch.object(display, 'power_states', side_effect=[['off'], ['off'], ['off'], ['on']]), \
+             patch.object(display, 'set_power') as power:
+            agent = display.DisplayAgent(Path(directory) / 'display.json')
+            for time in ['06:57:59', '06:58:00', '07:00:00']:
+                agent.tick(at(time))
+            self.assertEqual([call.args for call in self.kiosk.call_args_list], [(False,), (True,), (True,)])
+            self.assertEqual([call.args for call in self.output_guard.call_args_list], [(True,), (True,), (False,)])
+            power.assert_called_once_with(False)
+
+    def test_browser_stops_even_if_display_control_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display, 'exchange', return_value=NIGHT), \
+             patch.object(display, 'power_states', side_effect=RuntimeError('display unavailable')):
+            display.DisplayAgent(Path(directory) / 'display.json').tick(at('23:00'))
+            self.kiosk.assert_called_once_with(False)
+
+    def test_warmup_uses_elapsed_time_across_dst_and_short_awake_window(self):
+        zone = ZoneInfo('America/New_York')
+        cases = [('2026-03-08T06:57:59+00:00', '02:30', 'sleeping'),
+                 ('2026-03-08T06:58:00+00:00', '02:30', 'warming'),
+                 ('2026-03-08T07:00:00+00:00', '02:30', 'awake'),
+                 ('2026-11-01T05:59:00+00:00', '02:00', 'sleeping'),
+                 ('2026-11-01T06:58:00+00:00', '02:00', 'warming')]
+        for utc, end, expected in cases:
+            self.assertEqual(display.power_phase({**NIGHT, 'sleepEnd': end}, datetime.datetime.fromisoformat(utc).astimezone(zone)), expected)
+        self.assertEqual(display.power_phase({**NIGHT, 'sleepStart': '07:01'}, at('06:59:30')), 'warming')
 
     def test_dst_uses_local_wall_clock_including_skipped_wake_time(self):
         zone = ZoneInfo('America/New_York')
@@ -151,6 +180,34 @@ def monitor(enabled=True, refresh=100.0):
 
 
 class ReconnectTests(unittest.TestCase):
+    def test_overnight_service_cleanup_stays_dark_and_stops_browser(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display.DisplayOutputs, 'prepare') as prepare, \
+             patch.object(display, 'set_power') as power, patch.object(display, 'set_kiosk') as kiosk, \
+             patch.object(display, 'local_now', return_value=at('23:00')):
+            state = Path(directory)
+            display.DisplayAgent(state / 'display.json').save(NIGHT)
+            display.cleanup(state)
+            prepare.assert_called_once_with(True)
+            power.assert_called_once_with(True)
+            kiosk.assert_called_once_with(False)
+
+    def test_daytime_service_cleanup_recovers_hdmi(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(display, 'wake') as wake, \
+             patch.object(display, 'local_now', return_value=at('12:00')):
+            state = Path(directory)
+            display.DisplayAgent(state / 'display.json').save(NIGHT)
+            display.cleanup(state)
+            wake.assert_called_once_with(state)
+
+    def test_kiosk_only_changes_state_when_needed(self):
+        for requested, status, command in [(False, 'active', 'stop'), (True, 'inactive', 'start'), (False, 'inactive', None), (True, 'active', None)]:
+            with patch.object(display.subprocess, 'run', return_value=SimpleNamespace(stdout=status)) as run:
+                self.assertEqual(display.set_kiosk(requested), requested)
+                if command:
+                    self.assertEqual(run.call_args.args[0], ['systemctl', '--user', command, 'imframe-kiosk.service'])
+                else:
+                    self.assertEqual(run.call_count, 1)
+
     def test_reconnect_stays_disabled_and_wake_after_restart_restores_100hz(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(display, 'signal_desktop') as signals, \
              patch.object(display, 'physical_outputs') as outputs, patch.object(display.subprocess, 'run') as run:

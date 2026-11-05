@@ -5,9 +5,9 @@ StartLimitIntervalSec=0
 [Service]
 Type=exec
 ExecStart=/usr/bin/python3 %h/.local/libexec/imframe/display.py
-ExecStopPost=/usr/bin/python3 %h/.local/libexec/imframe/display.py --wake
+ExecStopPost=/usr/bin/python3 %h/.local/libexec/imframe/display.py --cleanup
 Restart=always
 RestartSec=5
-TimeoutStopSec=20
+TimeoutStopSec=40
 UMask=0077
 NoNewPrivileges=true

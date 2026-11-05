@@ -149,3 +149,31 @@ test('failed and truncated downloads fall back without serving partial files', a
   assert.equal(await cache.acquire('truncated', idle(), idle()), null);
   assert.equal(cache.bytes, 0);
 });
+
+test('sleep clears ready files, cancels active downloads, and supports a fresh warmup', async t => {
+  const requests: string[] = [];
+  let aborted = false;
+  const cache = new MediaPrefetch((async (url, init) => {
+    requests.push(String(url));
+    if (url !== 'slow') return new Response('photo');
+    return new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => { aborted = true; reject(init!.signal!.reason); }, { once: true });
+    });
+  }) as typeof fetch);
+  t.after(() => cache.dispose());
+  cache.plan(['ready', 'slow', 'queued'], 100);
+  await until(() => requests.includes('slow'));
+  const waiting = cache.acquire('slow', idle(), idle());
+  cache.clear();
+  assert.equal(await waiting, null);
+  assert.equal(aborted, true);
+  assert.equal(cache.bytes, 0);
+  assert.equal(cache.loading, 0);
+  assert.equal(cache.ready('ready'), false);
+  assert.equal(requests.includes('queued'), false);
+  cache.plan(['morning'], 100);
+  assert.equal(requests.includes('morning'), false);
+  cache.pause(false);
+  await until(() => cache.ready('morning'));
+  assert.equal(cache.settled('morning'), true);
+});

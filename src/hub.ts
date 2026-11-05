@@ -19,7 +19,7 @@ const numbers = new Set(Object.entries(defaults).filter(([, value]) => typeof va
   const path = (id: string, suffix: string) => `hub/satellites/${id}/${suffix}`;
   const asleep = (s: SatelliteRecord) => s.snapshot.display?.connected && s.snapshot.display.sleeping === true;
   const online = (s: SatelliteRecord) => !s.error && !asleep(s) && s.snapshot.playerOnline && Date.now() - Date.parse(s.lastSeenAt) < 15_000;
-  const status = (s: SatelliteRecord) => s.error ? 'Offline' : asleep(s) ? 'Sleeping' : !s.snapshot.playerOnline ? 'Player offline' : s.snapshot.playback?.paused ? 'Paused' : 'Playing';
+  const status = (s: SatelliteRecord) => s.error ? 'Offline' : asleep(s) ? s.snapshot.display?.phase === 'warming' ? 'Preparing to wake' : 'Sleeping' : !s.snapshot.playerOnline ? 'Player offline' : s.snapshot.playback?.paused ? 'Paused' : 'Playing';
 
 export async function showHub(root: HTMLElement) {
   document.body.classList.add('hub-page'); document.title = 'Hub · imframe';

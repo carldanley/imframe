@@ -1,4 +1,5 @@
 import type { FrameSettings, Media } from './model.js';
+import type { PowerPhase } from './power.js';
 
 export type PlaybackAction = 'previous' | 'pause' | 'resume' | 'next';
 export interface PlaybackCommand {
@@ -41,6 +42,8 @@ export interface DisplayState {
   sleeping: boolean | null;
   timeZone: string | null;
   error: string | null;
+  phase?: PowerPhase;
+  kioskRunning?: boolean | null;
 }
 export interface SatelliteRecord {
   id: string;

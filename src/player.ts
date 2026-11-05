@@ -10,6 +10,7 @@ import { MediaPrefetch, type PrefetchedFile } from '../shared/media-prefetch.js'
 import { PlaybackIndicators } from './playback-indicators.js';
 import { loadVideoAperture } from '../shared/video-aperture.js';
 import { frameVideo } from './video-framing.js';
+import type { PowerState } from '../shared/power.js';
 
 interface Slide {
   media: Media;
@@ -385,9 +386,49 @@ export async function startPlayer(root: HTMLElement) {
   let awaitingMedia = true;
   let videoBuffering = false;
   let indicatorFrame = 0;
+  let power: PowerState = { phase: 'sleeping', warmupSeconds: 120 };
+  let powerKnown = false;
+  let refreshAbort = new AbortController();
+  let heartbeat = 0;
+  let interval = 0;
+  const powerWaiters = new Set<() => void>();
   const fullscreenDisplay = window.matchMedia('(display-mode: fullscreen)');
+  const sleeping = () => power.phase === 'sleeping';
+  const warming = () => power.phase === 'warming';
+
+  function wakeWaiters() { for (const resolve of powerWaiters) resolve(); powerWaiters.clear(); }
+  function powerChanged() { return new Promise<void>(resolve => powerWaiters.add(resolve)); }
+  function armTimers() {
+    clearInterval(heartbeat); clearInterval(interval);
+    heartbeat = window.setInterval(() => report(), sleeping() ? 30_000 : 1000);
+    interval = window.setInterval(() => { void refresh(); }, sleeping() ? 30_000 : 5000);
+  }
+  function setPower(next: PowerState) {
+    if (stopped || !['awake', 'sleeping', 'warming'].includes(next.phase)) return;
+    const changed = !powerKnown || next.phase !== power.phase;
+    powerKnown = true;
+    power = next;
+    if (changed) {
+      if (sleeping()) {
+        refreshAbort.abort(); displayController.abort(); cancelPending();
+        if (current) { playlist.putBack(current.media.id); current.dispose(); current = undefined; }
+        prefetch.clear(); clock.clear(); refreshedAt = 0;
+        awaitingMedia = true; videoBuffering = false;
+        message.hidden = false; statusText.textContent = 'Sleeping until the scheduled wake time.';
+      } else if (warming()) {
+        message.hidden = false; statusText.textContent = 'Preparing photos before wake-up…';
+      } else if (!current) {
+        // A slow full-file warmup must not delay the normal streaming path.
+        pending?.needed.abort();
+      }
+      cancelAnimationFrame(indicatorFrame);
+      updateIndicators(); armTimers();
+    }
+    wakeWaiters();
+  }
 
   function updateIndicators() {
+    if (power.phase !== 'awake') { indicators.loading(false); indicators.render(settings, null); return; }
     indicators.loading(videoBuffering || (awaitingMedia && (!refreshedAt || playlist.size > 0)));
     indicators.render(settings, awaitingMedia ? null : clock.sample(performance.now(), current?.video), pending ? playlist.get(pending.id)?.type : undefined);
     indicatorFrame = requestAnimationFrame(updateIndicators);
@@ -434,6 +475,7 @@ export async function startPlayer(root: HTMLElement) {
     }
     handled.set(command.id, undefined);
     if (handled.size > 100) handled.delete(handled.keys().next().value!);
+    if (power.phase !== 'awake') { await acknowledge(command, 'The frame is sleeping. Change its sleep schedule to wake it.'); return; }
     if (command.action === 'pause' || command.action === 'resume') {
       paused = command.action === 'pause';
       clock.setPaused(paused, performance.now());
@@ -475,7 +517,7 @@ export async function startPlayer(root: HTMLElement) {
         foregroundTransform: current ? getComputedStyle(current.element.querySelector('.slide-foreground')!).transform : 'none',
         foregroundOrigin: current ? getComputedStyle(current.element.querySelector('.slide-foreground')!).transformOrigin : '50% 50%',
       },
-      state: current ? paused ? 'paused' : 'playing' : 'waiting', frame: settings.name,
+      state: power.phase !== 'awake' ? power.phase : current ? paused ? 'paused' : 'playing' : 'waiting', frame: settings.name,
       media: current?.media.name ?? null, kind: current?.media.type ?? null,
       location: formatLocation(current?.media.location),
       sourcePixels: current ? `${current.width} × ${current.height}` : null,
@@ -487,7 +529,8 @@ export async function startPlayer(root: HTMLElement) {
       totalMedia: playlist.size, ...health.report(),
       lastLibraryRefresh: lastLibrary.refreshedAt,
       countdownSeconds: clock.sample(performance.now(), current?.video)?.remainingSeconds ?? null,
-      loadingMedia: awaitingMedia || videoBuffering,
+      loadingMedia: !sleeping() && (awaitingMedia || videoBuffering),
+      warmup: { prepared: !!current, cacheSettled: upcoming.flatMap(fileUrls).every(url => prefetch.settled(url)) },
       preload: {
         ahead: upcoming.length,
         ready: upcoming.filter(media => fileUrls(media).every(url => prefetch.ready(url))).length,
@@ -495,10 +538,11 @@ export async function startPlayer(root: HTMLElement) {
       },
     };
     reporting = true;
-    void api<{ accepted: boolean; commands: PlaybackCommand[]; previewRequested?: boolean }>('player', { method: 'POST', body: JSON.stringify(data), signal: AbortSignal.timeout(4000) })
+    void api<{ accepted: boolean; commands: PlaybackCommand[]; previewRequested?: boolean; power?: PowerState }>('player', { method: 'POST', body: JSON.stringify(data), signal: AbortSignal.timeout(4000) })
       .then(receipt => {
+        if (receipt.power) setPower(receipt.power);
         for (const entry of receipt.commands) void applyCommand(entry);
-        if (receipt.accepted && receipt.previewRequested && current && !previewing && Date.now() - lastPreview > 1500) {
+        if (power.phase === 'awake' && receipt.accepted && receipt.previewRequested && current && !previewing && Date.now() - lastPreview > 1500) {
           previewing = true; lastPreview = Date.now();
           void capturePreview(current.element, current.image, current.video).then(blob => blob && fetch(`/api/preview?session=${sessionId}`, {
             method: 'POST', body: blob, signal: AbortSignal.timeout(4000),
@@ -529,6 +573,7 @@ export async function startPlayer(root: HTMLElement) {
   }
 
   function updatePrefetch() {
+    if (sleeping()) return;
     prefetch.plan(lookahead().flatMap(fileUrls), settings.preloadMegabytes * 1024 * 1024);
   }
 
@@ -536,12 +581,15 @@ export async function startPlayer(root: HTMLElement) {
     if (refreshing) return;
     refreshing = true;
     try {
-      const updated = await api<FrameSettings>('settings');
+      setPower(await api<PowerState>('power', { signal: AbortSignal.timeout(4000) }));
+      const controller = new AbortController(); refreshAbort = controller;
+      const updated = await api<FrameSettings>('settings', { signal: controller.signal });
+      if (sleeping()) { settings = updated; report(); return; }
       const changed = JSON.stringify(updated) !== JSON.stringify(settings);
-      const due = Date.now() - refreshedAt >= updated.refreshSeconds * 1000;
+      const due = !warming() && Date.now() - refreshedAt >= updated.refreshSeconds * 1000;
       if (changed || due || !refreshedAt) {
-        const library = await api<Library>('library?refresh=1');
-        if (stopped) return;
+        const library = await api<Library>('library?refresh=1', { signal: controller.signal });
+        if (stopped || sleeping() || controller.signal.aborted) return;
         settings = updated;
         lastLibrary = library;
         playlist.update(library.albums, settings);
@@ -552,7 +600,7 @@ export async function startPlayer(root: HTMLElement) {
         if (current) {
           const media = playlist.get(current.media.id);
           if (media) { current.media = media; updateOverlays(current, settings); }
-          else { current.dispose(); current = undefined; clock.clear(); awaitingMedia = true; prefetch.pause(true); displayController.abort(); }
+          else { current.dispose(); current = undefined; clock.clear(); awaitingMedia = true; prefetch.pause(true); displayController.abort(); wakeWaiters(); }
         }
         if (!playlist.size) {
           message.hidden = false;
@@ -561,13 +609,14 @@ export async function startPlayer(root: HTMLElement) {
       }
       report();
     } catch (error) {
+      if (sleeping() || refreshAbort.signal.aborted) return;
       if (!current) { message.hidden = false; statusText.textContent = 'Cannot reach your photo library. Retrying automatically…'; }
       report((error as Error).message);
     } finally { refreshing = false; }
   }
 
   function preload() {
-    if (pending || !playlist.size) return;
+    if (sleeping() || pending || !playlist.size) return;
     const controller = new AbortController();
     const job = { id: '', updatedAt: '', ready: false, controller, needed: new AbortController(), promise: Promise.resolve<Slide | undefined>(undefined) };
     pending = job;
@@ -621,15 +670,14 @@ export async function startPlayer(root: HTMLElement) {
   }
 
   const events = new EventSource('/api/events');
-  events.addEventListener('message', event => { if (event.data === 'settings' || event.data === 'ready') void refresh(); });
-  const heartbeat = window.setInterval(() => report(), 1000);
-  const interval = window.setInterval(() => { void refresh(); }, 5000);
+  events.addEventListener('message', event => { if (['settings', 'ready', 'power'].includes(event.data)) void refresh(); });
+  armTimers();
   window.addEventListener('pagehide', () => {
     stopped = true; events.close(); clearInterval(heartbeat); clearInterval(interval); clearTimeout(controlsTimer);
     cancelAnimationFrame(indicatorFrame);
     document.removeEventListener('fullscreenchange', fullscreenChanged);
     fullscreenDisplay.removeEventListener('change', fullscreenChanged);
-    cancelPending(); displayController.abort(); current?.dispose();
+    refreshAbort.abort(); cancelPending(); displayController.abort(); current?.dispose(); wakeWaiters();
     prefetch.dispose();
   }, { once: true });
   showControls();
@@ -638,14 +686,17 @@ export async function startPlayer(root: HTMLElement) {
   // The pagehide handler stops this loop while it yields to media/network work.
   // oxlint-disable-next-line eslint/no-unmodified-loop-condition
   while (!stopped) {
+    while (sleeping()) { await powerChanged(); if (stopped) break; }
+    if (stopped) break;
     preload();
     const job = pending;
     awaitingMedia = true;
-    prefetch.pause(true);
+    prefetch.pause(!warming());
     if (!job) { clock.clear(); await delay(1000); continue; }
-    job.needed.abort();
+    if (!warming()) job.needed.abort();
     const slide = await job.promise;
     if (stopped) { slide?.dispose(); break; }
+    if (sleeping()) { slide?.dispose(); continue; }
     if (pending !== job) { slide?.dispose(); continue; }
     pending = undefined;
     if (!slide || !playlist.contains(slide.media.id)) {
@@ -664,6 +715,11 @@ export async function startPlayer(root: HTMLElement) {
     awaitingMedia = false;
     await transition(slide);
     if (stopped || current !== slide) continue;
+    // Hold a decoded first frame and fill the normal lookahead cache while HDMI
+    // is still off. Start media clocks and motion only at the scheduled wake.
+    prefetch.pause(false); preload(); report();
+    while (warming()) { await powerChanged(); if (stopped || current !== slide) break; }
+    if (stopped || sleeping() || current !== slide) continue;
     const photoSeconds = settings.photoSeconds;
     let stillSeconds = photoSeconds;
     if (slide.video && slide.image) clock.startLivePhoto(photoSeconds);

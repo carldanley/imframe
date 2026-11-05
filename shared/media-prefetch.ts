@@ -29,6 +29,7 @@ export class MediaPrefetch {
   get bytes() { return [...this.entries.values()].reduce((sum, entry) => sum + entry.bytes, 0); }
   ready(url: string) { return this.entries.get(url)?.state === 'ready'; }
   get loading() { return [...this.entries.values()].filter(entry => entry.state === 'loading').length; }
+  settled(url: string) { const state = this.entries.get(url)?.state; return state === 'ready' || state === 'skipped'; }
 
   plan(urls: string[], limitBytes: number) {
     if (this.closed) return;
@@ -97,6 +98,12 @@ export class MediaPrefetch {
 
   dispose() {
     this.closed = true;
+    this.clear();
+  }
+
+  /** Cancel every download and release memory, while allowing a later warmup. */
+  clear() {
+    this.paused = true;
     this.order = [];
     for (const entry of this.entries.values()) this.remove(entry);
   }

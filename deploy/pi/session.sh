@@ -7,4 +7,5 @@ for variable in DISPLAY WAYLAND_DISPLAY XAUTHORITY XDG_SESSION_TYPE XDG_CURRENT_
     systemctl --user import-environment "$variable"
   fi
 done
-systemctl --user start imframe-kiosk.service imframe-display.service
+# The display agent starts Chromium only when awake or preparing to wake.
+systemctl --user start imframe-display.service

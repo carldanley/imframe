@@ -7,9 +7,10 @@ import type { DisplayState, PlaybackCommand, PlaybackSnapshot, SatelliteInfo, Up
 import { HttpError } from './immich.js';
 import { object } from './http.js';
 import { JsonStore } from './json-store.js';
+import { powerState } from '../shared/power.js';
 
 export class SatelliteRuntime {
-  private saved: { id: string; update: UpdateState } = { id: randomUUID(), update: { managedBy: null, requested: null, result: null, agentSeenAt: null } };
+  private saved: { id: string; update: UpdateState; timeZone?: string } = { id: randomUUID(), update: { managedBy: null, requested: null, result: null, agentSeenAt: null } };
   private store?: JsonStore<typeof this.saved>;
   private player: { id: string; kiosk: boolean; seenAt: number } | null = null;
   private playback: PlaybackSnapshot | null = null;
@@ -21,6 +22,7 @@ export class SatelliteRuntime {
   private listeners = new Set<ServerResponse>();
   private commands = new Map<string, { command: PlaybackCommand; session: string; promise: Promise<unknown>; settle: (error?: string) => void }>();
   private completed = new Map<string, { action: string; error?: string }>();
+  private powerPhase = '';
   constructor(directory?: string, readonly version = 'development', private timeoutMs = 30_000) {
     if (directory) this.store = new JsonStore(join(directory, 'satellite.json'), this.saved);
   }
@@ -30,6 +32,15 @@ export class SatelliteRuntime {
     this.saved = await this.store.change(value => value);
   }
   get online() { return !!this.player && Date.now() - this.player.seenAt < 8_000; }
+  power(settings: FrameSettings) { return powerState(settings, this.saved.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone); }
+  powerChanged(settings: FrameSettings) {
+    const power = this.power(settings);
+    if (power.phase !== this.powerPhase) {
+      this.powerPhase = power.phase;
+      for (const listener of this.listeners) listener.write('data: power\n\n');
+    }
+    return power;
+  }
   getPreview() { this.previewUntil = Date.now() + 10_000; return this.preview ? { bytes: this.preview, capturedAt: this.previewAt } : null; }
   setPreview(session: string | null, image: Buffer) {
     if (this.player?.id === session && this.online) { this.preview = image; this.previewAt = Date.now(); }
@@ -37,19 +48,27 @@ export class SatelliteRuntime {
   info(settings: FrameSettings): SatelliteInfo {
     return { id: this.saved.id, apiVersion: 1, version: this.version, name: settings.name, settings,
       playback: this.playback, playerOnline: this.online, update: structuredClone(this.saved.update),
-      display: { ...this.display, connected: this.displaySeenAt > 0 && Date.now() - this.displaySeenAt < 45_000 } };
+      display: { ...this.display, phase: this.power(settings).phase, connected: this.displaySeenAt > 0 && Date.now() - this.displaySeenAt < 45_000 } };
   }
-  displayAgent(input: unknown, settings: FrameSettings) {
+  async displayAgent(input: unknown, settings: FrameSettings) {
     const data = object(input);
     if ((data.sleeping !== null && typeof data.sleeping !== 'boolean') ||
       typeof data.timeZone !== 'string' || !data.timeZone || data.timeZone.length > 100 ||
-      (data.error !== null && (typeof data.error !== 'string' || data.error.length > 200))) {
+      (data.error !== null && (typeof data.error !== 'string' || data.error.length > 200)) ||
+      (data.kioskRunning !== undefined && data.kioskRunning !== null && typeof data.kioskRunning !== 'boolean')) {
       throw new HttpError(400, 'Invalid display report.');
     }
-    this.display = { sleeping: data.sleeping as boolean | null, timeZone: data.timeZone, error: data.error as string | null };
+    try { Intl.DateTimeFormat('en', { timeZone: data.timeZone }).resolvedOptions(); }
+    catch { throw new HttpError(400, 'Invalid display time zone.'); }
+    if (data.timeZone !== this.saved.timeZone) {
+      if (this.store) this.saved = await this.store.change(state => ({ ...state, timeZone: data.timeZone as string }));
+      else this.saved.timeZone = data.timeZone;
+    }
+    this.display = { sleeping: data.sleeping as boolean | null, timeZone: data.timeZone, error: data.error as string | null,
+      ...(data.kioskRunning !== undefined ? { kioskRunning: data.kioskRunning as boolean | null } : {}) };
     this.displaySeenAt = Date.now();
     const { sleepEnabled, sleepStart, sleepEnd } = settings;
-    return { sleepEnabled, sleepStart, sleepEnd };
+    return { sleepEnabled, sleepStart, sleepEnd, power: this.power(settings) };
   }
   subscribe(response: ServerResponse) {
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });

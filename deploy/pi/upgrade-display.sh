@@ -13,7 +13,18 @@ install -m 0644 "$source_dir/imframe-display.service" "$HOME/.config/systemd/use
 python3 "$HOME/.local/libexec/imframe/display.py" --configure
 systemctl --user daemon-reload
 if systemctl --user show-environment | grep -q '^WAYLAND_DISPLAY='; then
-  systemctl --user restart imframe-display.service
+  if systemctl --user is-active --quiet imframe-display.service && python3 "$HOME/.local/libexec/imframe/display.py" --is-sleeping; then
+    # Older agents wake the monitor in their SIGTERM/finally handler. The new
+    # ExecStopPost preserves sleep, and Restart=always starts the new agent.
+    systemctl --user kill --kill-whom=main --signal=SIGKILL imframe-display.service
+    for ((attempt = 0; attempt < 15; attempt++)); do
+      sleep 1
+      if systemctl --user is-active --quiet imframe-display.service; then break; fi
+    done
+    systemctl --user is-active --quiet imframe-display.service
+  else
+    systemctl --user restart imframe-display.service
+  fi
   echo 'Display sleep service installed and running.'
 else
   echo 'Display sleep service installed. It will start at the next desktop login.'

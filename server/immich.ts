@@ -35,7 +35,7 @@ export class ImmichClient {
   async request(path: string, init: RequestInit = {}, publicRequest = false) {
     if (!this.key && !publicRequest) throw new HttpError(503, 'Add IMMICH_API_KEY to .env and restart the app.');
     const response = await this.fetcher(new URL(path, this.base), {
-      ...init, redirect: 'error', signal: init.signal ?? AbortSignal.timeout(20_000),
+      ...init, redirect: 'error', signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000),
       headers: { 'Content-Type': 'application/json', ...(this.key ? { 'x-api-key': this.key } : {}), ...init.headers },
     });
     if (!response.ok) {
@@ -52,17 +52,18 @@ export class ImmichClient {
     return `${v.major}.${v.minor}.${v.patch}`;
   }
 
-  async albums(): Promise<Album[]> {
-    const data = await this.request('albums') as { id: string; albumName: string; assetCount: number; albumThumbnailAssetId: string | null }[];
+  async albums(signal?: AbortSignal): Promise<Album[]> {
+    const data = await this.request('albums', { signal }) as { id: string; albumName: string; assetCount: number; albumThumbnailAssetId: string | null }[];
     return data.map(a => ({ id: a.id, name: a.albumName, count: a.assetCount, thumbnailId: a.albumThumbnailAssetId }));
   }
 
-  async albumMedia(albumId: string): Promise<AlbumMedia> {
+  async albumMedia(albumId: string, signal?: AbortSignal): Promise<AlbumMedia> {
     const result: Media[] = [];
     const cursors = new Set<string>();
     let cursor: string | undefined;
     do {
       const data = await this.request('search/metadata', {
+        signal,
         method: 'POST', body: JSON.stringify({
           filter: { albumIds: { any: [albumId] }, trashedAt: { eq: null }, type: { in: ['IMAGE', 'VIDEO'] } },
           size: 500, orderBy: { field: 'fileCreatedAt', direction: 'asc' },
