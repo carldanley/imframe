@@ -11,12 +11,14 @@ import { PlaybackIndicators } from './playback-indicators.js';
 import { loadVideoAperture } from '../shared/video-aperture.js';
 import { frameVideo } from './video-framing.js';
 import type { PowerState } from '../shared/power.js';
+import { peopleAges } from '../shared/people.js';
 
 interface Slide {
   media: Media;
   element: HTMLDivElement;
   caption: HTMLDivElement;
   date: HTMLDivElement;
+  people: HTMLDivElement;
   image?: HTMLImageElement;
   video?: HTMLVideoElement;
   startMotion?: (seconds: number) => void;
@@ -77,6 +79,17 @@ function updateOverlays(slide: Slide, settings: FrameSettings) {
     }));
   }
   time.dateTime = formattedDate ? sourceDate!.slice(0, 10) : '';
+  const people = peopleAges(slide.media, settings);
+  slide.people.hidden = !people.length;
+  positionCaption(slide, slide.people, settings.peopleCorner);
+  const list = slide.people.querySelector('.people-list')!;
+  list.replaceChildren(...people.map(person => {
+    const row = document.createElement('span'); row.className = 'person-age';
+    const name = document.createElement('span'); name.className = 'person-name'; name.textContent = person.name;
+    const age = document.createElement('span'); age.className = 'person-age-value'; age.textContent = person.age;
+    row.append(name, age);
+    return row;
+  }));
 }
 
 const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
@@ -165,6 +178,11 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
   date.hidden = true;
   date.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 11h18M8 15h.01M12 15h.01M16 15h.01M8 18h.01M12 18h.01M16 18h.01"/></svg>
     <span class="date-copy"><span class="date-label">Date taken</span><time></time></span>`;
+  const people = document.createElement('div');
+  people.className = 'frame-caption frame-people';
+  people.hidden = true;
+  people.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 4a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.65"/></svg>
+    <span class="people-copy"><span class="people-label">Age when taken</span><span class="people-list"></span></span>`;
   // Keep opposite-corner captions aligned, including when a location wraps.
   const captionSize = new ResizeObserver(([entry]) => {
     const height = entry?.borderBoxSize[0]?.blockSize ?? caption.getBoundingClientRect().height;
@@ -181,7 +199,7 @@ async function prepare(media: Media, settings: FrameSettings, stage: HTMLElement
   };
   let disposeVideoFraming: (() => void) | undefined;
   const slide: Slide = {
-    media, element, caption, date, warnings: [], width: 0, height: 0, loadMs: 0,
+    media, element, caption, date, people, warnings: [], width: 0, height: 0, loadMs: 0,
     dispose() {
       captionSize.disconnect();
       disposeVideoFraming?.();

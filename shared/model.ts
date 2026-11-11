@@ -23,6 +23,9 @@ export interface FrameSettings {
   locationCorner: LocationCorner;
   showDate: boolean;
   dateCorner: LocationCorner;
+  showPeople: boolean;
+  peopleNames: string[];
+  peopleCorner: LocationCorner;
   progressStyle: 'off' | 'bar' | 'ring';
   progressPosition: 'top' | 'bottom' | 'left' | 'right';
   progressCorner: LocationCorner;
@@ -40,6 +43,7 @@ export const defaults: FrameSettings = {
   preloadCount: 3, preloadMegabytes: 512,
   showLocation: false, locationCorner: 'bottom-left',
   showDate: false, dateCorner: 'top-left',
+  showPeople: false, peopleNames: [], peopleCorner: 'bottom-right',
   progressStyle: 'off', progressPosition: 'bottom', progressCorner: 'bottom-right',
   sleepEnabled: false, sleepStart: '22:00', sleepEnd: '07:00',
 };
@@ -55,6 +59,28 @@ export interface MediaLocation {
   city: string | null;
   state: string | null;
   country: string | null;
+}
+
+export interface MediaPerson {
+  id: string;
+  name: string;
+  birthDate: string | null;
+}
+
+export const cleanPersonName = (name: string) => name.normalize('NFC').trim().replace(/\s+/gu, ' ');
+export const personNameKey = (name: string) => cleanPersonName(name).normalize('NFKC').toLowerCase();
+export const peopleNamesFromText = (text: string) => text.split(/\r?\n/u).map(cleanPersonName).filter(Boolean);
+
+function parsePeopleNames(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 50 || !value.every(name => typeof name === 'string' && cleanPersonName(name).length <= 100)) {
+    throw new Error('Use up to 50 people names, each no longer than 100 characters.');
+  }
+  const names = new Map<string, string>();
+  for (const valueName of value as string[]) {
+    const name = cleanPersonName(valueName);
+    if (name && !names.has(personNameKey(name))) names.set(personNameKey(name), name);
+  }
+  return [...names.values()];
 }
 
 export function formatLocation(location: MediaLocation | null | undefined): string | null {
@@ -85,6 +111,8 @@ export interface Media {
   mimeType: string;
   livePhotoVideoId: string | null;
   location: MediaLocation | null;
+  /** Older satellites may omit people until their software is updated. */
+  people?: MediaPerson[];
 }
 
 export interface AlbumMedia { albumId: string; media: Media[] }
@@ -156,6 +184,9 @@ export function parseSettings(input: unknown): FrameSettings {
     locationCorner: p.locationCorner === undefined ? defaults.locationCorner : choice('locationCorner', ['bottom-left', 'bottom-right', 'top-left', 'top-right']),
     showDate: p.showDate === undefined ? defaults.showDate : boolean('showDate'),
     dateCorner: p.dateCorner === undefined ? defaults.dateCorner : choice('dateCorner', ['bottom-left', 'bottom-right', 'top-left', 'top-right']),
+    showPeople: p.showPeople === undefined ? defaults.showPeople : boolean('showPeople'),
+    peopleNames: parsePeopleNames(p.peopleNames === undefined ? defaults.peopleNames : p.peopleNames),
+    peopleCorner: p.peopleCorner === undefined ? defaults.peopleCorner : choice('peopleCorner', ['bottom-left', 'bottom-right', 'top-left', 'top-right']),
     progressStyle, progressPosition,
     progressCorner: p.progressCorner === undefined
       ? progressStyle === 'ring' ? legacyCorners[progressPosition] : defaults.progressCorner

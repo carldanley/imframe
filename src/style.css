@@ -28,6 +28,16 @@
 .date-label{font-size:.5em;font-weight:400;letter-spacing:.15em;text-transform:uppercase;color:#ffffffb8;line-height:1.2}
 .frame-date time{font-size:clamp(20px,2vw,38px);font-weight:300;font-variant-numeric:lining-nums tabular-nums;letter-spacing:.06em;line-height:1.1;white-space:nowrap}
 .date-leading-zero{color:#ffffff80}
+.field textarea{font:inherit;font-size:14px;line-height:1.6;border:1px solid #dfe4d8;background:#fffefa;color:#354332;padding:10px 11px;border-radius:7px;width:100%;resize:vertical;min-height:90px}
+.frame-people{display:flex;align-items:center;gap:.6em}
+.frame-people>svg{width:1.2em;height:1.2em;flex-shrink:0}
+.people-copy,.people-list{display:flex;flex-direction:column;gap:.2em;min-width:0}
+.people-label{font-size:.5em;font-weight:400;letter-spacing:.15em;text-transform:uppercase;color:#ffffffb8;line-height:1.2}
+.person-age{display:flex;align-items:baseline;justify-content:space-between;gap:.8em;flex-wrap:wrap}
+.person-name{font-weight:500;overflow-wrap:anywhere;min-width:0}
+.person-age-value{color:#d4dece;font-size:.8em;font-weight:300;font-variant-numeric:tabular-nums}
+.frame-people[data-corner="top-right"],.frame-people[data-corner="bottom-right"]{flex-direction:row-reverse;text-align:right}
+.frame-people[data-corner="top-right"] .person-age,.frame-people[data-corner="bottom-right"] .person-age{justify-content:flex-end}
 .frame-corner[data-corner="bottom-left"],.frame-corner[data-corner="top-left"]{left:max(var(--inset),env(safe-area-inset-left))}
 .frame-corner[data-corner="bottom-right"],.frame-corner[data-corner="top-right"]{right:max(var(--inset),env(safe-area-inset-right));align-items:flex-end}
 .frame-corner[data-corner="top-left"],.frame-corner[data-corner="top-right"]{top:max(var(--inset),env(safe-area-inset-top))}

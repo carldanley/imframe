@@ -44,7 +44,7 @@ export async function capturePreview(element: HTMLElement, image?: HTMLImageElem
     const box = caption.getBoundingClientRect();
     context.fillStyle = 'rgba(20, 24, 22, .5)';
     context.beginPath(); context.roundRect(box.x, box.y, box.width, box.height, 6); context.fill();
-    for (const text of caption.querySelectorAll<HTMLElement>('.location-city, .location-state, .location-country, .date-label, time')) {
+    for (const text of caption.querySelectorAll<HTMLElement>('.location-city, .location-state, .location-country, .date-label, time, .people-label, .person-name, .person-age-value')) {
       if (!text.textContent || !text.getBoundingClientRect().height) continue;
       const bounds = text.getBoundingClientRect(); const style = getComputedStyle(text);
       context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;

@@ -113,6 +113,11 @@ test('Hub reads the remote name, patches all settings, persists membership and f
   await assert.rejects(hub.add(address), /already been added/);
   await Promise.all([hub.settings(added.id, { photoSeconds: 20, showDate: true }), hub.settings(added.id, { showLocation: true })]);
   assert.equal(settings.get().photoSeconds, 20); assert.equal(settings.get().showDate, true); assert.equal(settings.get().showLocation, true);
+  await hub.settings(added.id, { showPeople: true, peopleNames: [' Alex ', 'alex', 'Sam'], peopleCorner: 'top-right' });
+  assert.equal(settings.get().showPeople, true);
+  assert.deepEqual(settings.get().peopleNames, ['Alex', 'Sam']);
+  assert.equal(settings.get().peopleCorner, 'top-right');
+  assert.deepEqual((await hub.refresh(added.id)).snapshot.settings.peopleNames, ['Alex', 'Sam']);
   await settings.save({ name: 'Remote rename' }, true);
   assert.equal((await hub.refresh(added.id)).snapshot.name, 'Remote rename');
   await assert.rejects(hub.settings(added.id, { photoSeconds: 0 }), /photoSeconds/);
@@ -138,11 +143,12 @@ test('offline settings persist in Hub and reconcile without overwriting unrelate
   }) as typeof fetch;
   const hub = new Hub(dir, fetcher); await hub.load(); await hub.add('frame.local');
   connected = false;
-  const saved = await hub.settings(id, { photoSeconds: 21 }); assert.equal(saved.pendingSettings?.photoSeconds, 21);
+  const saved = await hub.settings(id, { photoSeconds: 21, showPeople: true, peopleNames: ['Sam'], peopleCorner: 'bottom-left' }); assert.equal(saved.pendingSettings?.photoSeconds, 21);
   const restarted = new Hub(dir, fetcher); await restarted.load(); assert.equal(restarted.state().satellites[0]!.pendingSettings?.photoSeconds, 21);
   current.name = 'Changed directly'; connected = true;
   await restarted.refreshAll();
   assert.equal(current.name, 'Changed directly'); assert.equal(current.photoSeconds, 21);
+  assert.deepEqual(current.peopleNames, ['Sam']); assert.equal(current.showPeople, true); assert.equal(current.peopleCorner, 'bottom-left');
   assert.equal(restarted.state().satellites[0]!.pendingSettings, null);
 });
 

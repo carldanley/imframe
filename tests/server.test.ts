@@ -33,6 +33,7 @@ test('cursor pagination loads every page, preserves v3 millisecond durations, an
   assert.deepEqual(bodies[0]!.filter, { albumIds: { any: [albumId] }, trashedAt: { eq: null }, type: { in: ['IMAGE', 'VIDEO'] } });
   assert.equal(bodies[1]!.cursor, 'page-two');
   assert.equal(bodies[0]!.withExif, true);
+  assert.ok(bodies.every(body => body.withPeople === true));
   repeated = true;
   await assert.rejects(client.albumMedia(albumId), /repeated a pagination cursor/);
 });
@@ -74,6 +75,24 @@ test('capture metadata preserves the local date independently of chronological o
   assert.equal(formatTakenDate(media[0]!.localDateTime), '01.02.26');
   assert.equal(media[1]!.localDateTime, null);
   assert.equal(formatTakenDate(media[1]!.takenAt), '03.09.26');
+});
+
+test('album metadata includes only named, visible people and the fields needed for ages', async () => {
+  const client = new ImmichClient('https://immich.invalid', 'fixture-key', (async () => Response.json({
+    assets: { items: [
+      { id, type: 'IMAGE', people: [
+        { id: 'child', name: ' Alex ', birthDate: '2020-06-10', thumbnailPath: 'private-path', sharedWith: ['other-user'] },
+        { id: 'hidden', name: 'Hidden', birthDate: '1980-01-01', isHidden: true },
+        { id: 'unnamed', name: '', birthDate: null },
+      ] },
+      { id: 'video', type: 'VIDEO', people: [{ id: 'adult', name: 'Sam' }] },
+      { id: 'old', type: 'IMAGE' },
+    ], nextCursor: null },
+  })) as typeof fetch);
+  const { media } = await client.albumMedia(albumId);
+  assert.deepEqual(media[0]!.people, [{ id: 'child', name: 'Alex', birthDate: '2020-06-10' }]);
+  assert.deepEqual(media[1]!.people, [{ id: 'adult', name: 'Sam', birthDate: null }]);
+  assert.deepEqual(media[2]!.people, []);
 });
 
 test('existing settings gain overlay defaults without losing albums; overlay preferences persist and validate', async t => {

@@ -12,6 +12,7 @@ Connect a Raspberry Pi to a monitor and let your photos play. Use **Hub** on you
 | **Albums** | Pick several albums. Mix them together or play one at a time. Shuffle, play oldest first, or play newest first. |
 | **Media** | Full-size photos, videos, and Live Photos. Live Photo motion fades into the still before the photo timer starts. |
 | **Style** | Pan and zoom, adjustable transitions, blurred backgrounds, and optional location, date, and countdown displays. |
+| **People & ages** | Choose names for each frame and show their age when the photo or video was taken. Pick a corner or turn the overlay off. |
 | **Sleep hours** | Turn the screen off and stop playback and media downloads overnight. Photos preload before the scheduled wake time. |
 | **Everyday use** | Start fullscreen when the Pi boots. Preload upcoming media. Change settings without restarting playback. |
 
@@ -52,6 +53,8 @@ Open `http://<hub-address>:3002`. Hub needs no Immich API key; each frame keeps 
 3. Tap **Customize** to choose albums and adjust how they look.
 
 Changes save automatically. Keep managing your photos and albums in Immich. On iPhone, use Safari’s **Share → Add to Home Screen** to give Hub its own icon.
+
+For ages, enable **Style → Show people & ages** and enter one Immich name per line. Use the full name; capitalization does not matter. Birthdays stay in Immich. For another account’s photos, share both the album and the People profiles with the account used by the frame. People without birthdays are hidden.
 
 ## Updates
 

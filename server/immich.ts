@@ -1,4 +1,4 @@
-import type { Album, AlbumMedia, Media, MediaLocation } from '../shared/model.js';
+import { cleanPersonName, type Album, type AlbumMedia, type Media, type MediaLocation, type MediaPerson } from '../shared/model.js';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -9,6 +9,7 @@ interface AssetDto {
   fileCreatedAt: string; localDateTime?: string | null; updatedAt: string; width: number | null; height: number | null;
   duration: number | null; livePhotoVideoId?: string | null; isOffline?: boolean; isTrashed?: boolean;
   exifInfo?: { city?: string | null; state?: string | null; country?: string | null } | null;
+  people?: (MediaPerson & { isHidden?: boolean })[] | null;
 }
 interface SearchResult { assets: { items: AssetDto[]; nextCursor: string | null } }
 
@@ -67,7 +68,7 @@ export class ImmichClient {
         method: 'POST', body: JSON.stringify({
           filter: { albumIds: { any: [albumId] }, trashedAt: { eq: null }, type: { in: ['IMAGE', 'VIDEO'] } },
           size: 500, orderBy: { field: 'fileCreatedAt', direction: 'asc' },
-          withExif: true, ...(cursor ? { cursor } : {}),
+          withExif: true, withPeople: true, ...(cursor ? { cursor } : {}),
         }),
       }) as SearchResult;
       for (const a of data.assets.items) {
@@ -77,6 +78,9 @@ export class ImmichClient {
           takenAt: a.fileCreatedAt, localDateTime: a.localDateTime ?? null, updatedAt: a.updatedAt, width: a.width, height: a.height,
           durationMs: a.duration, mimeType: a.originalMimeType ?? '', livePhotoVideoId: a.livePhotoVideoId ?? null,
           location: locationInfo(a.exifInfo),
+          people: (a.people ?? []).filter(person => !person.isHidden && person.name?.trim()).map(person => ({
+            id: person.id, name: cleanPersonName(person.name), birthDate: person.birthDate ?? null,
+          })),
         });
       }
       cursor = data.assets.nextCursor ?? undefined;

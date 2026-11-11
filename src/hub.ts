@@ -1,6 +1,6 @@
 import { newId } from '../shared/id.js';
 import { api, escapeHtml as e } from './api.js';
-import { defaults, type Album, type FrameSettings } from '../shared/model.js';
+import { defaults, peopleNamesFromText, type Album, type FrameSettings } from '../shared/model.js';
 import { displayMessage } from '../shared/display.js';
 import type { HubState, PlaybackAction, SatelliteRecord } from '../shared/satellite.js';
 import './hub.css';
@@ -66,6 +66,15 @@ export async function showHub(root: HTMLElement) {
   function toggle(key: keyof FrameSettings, label: string, hint = '') {
     return `<label class="hub-toggle"><span><strong>${label}</strong>${hint ? `<small>${hint}</small>` : ''}</span><input name="${key}" type="checkbox" ${settings()[key] ? 'checked' : ''}/><i aria-hidden="true"></i></label>`;
   }
+  function peopleEditor() {
+    const s = settings();
+    return `${toggle('showPeople', 'Show people & ages', 'Their age when the photo or video was taken')}
+      <div data-dep="people" ${s.showPeople ? '' : 'hidden'}>
+        <label class="hub-field"><span>People to show</span><textarea name="peopleNames" rows="3" placeholder="Alex&#10;Sam" aria-describedby="hub-people-hint" spellcheck="false">${e(s.peopleNames.join('\n'))}</textarea></label>
+        <p class="hub-muted" id="hub-people-hint">One Immich name per line. Names must match in full; capitalization does not matter. Only these people appear. People without birthdays stay hidden.</p>
+        ${field('peopleCorner', 'People corner', corners)}
+      </div>`;
+  }
   function albumList() {
     if (!albums) return `<p class="hub-muted">${e(albumError || 'Loading albums…')}</p>`;
     const s = settings();
@@ -75,7 +84,7 @@ export async function showHub(root: HTMLElement) {
   function editor() {
     const s = settings();
     if (tab === 'albums') return `<div class="hub-section-title"><h2>Choose your albums</h2><button class="hub-text-button" data-action="refresh-albums" type="button">Refresh</button></div><p class="hub-muted">New photos and videos appear automatically.</p><input class="hub-search" type="search" placeholder="Find an album" aria-label="Find an album" value="${e(query)}"/><div class="hub-albums">${albumList()}</div><p class="hub-selection">${s.albumIds.length} ${s.albumIds.length === 1 ? 'album' : 'albums'} selected</p><div class="hub-fields">${field('playbackMode', 'Play albums', [['mixed', 'Mix them together'], ['albums', 'One album at a time']])}${field('mediaOrder', 'Media order', [['shuffle', 'Shuffle'], ['oldest', 'Oldest first'], ['newest', 'Newest first']])}</div><div data-dep="album-order" ${s.playbackMode !== 'albums' ? 'hidden' : ''}>${toggle('shuffleAlbums', 'Shuffle album order')}<details><summary>Album order</summary><ol class="hub-order">${s.albumIds.map((id, i) => `<li><span>${e(albums?.find(a => a.id === id)?.name ?? 'Unavailable album')}</span><button type="button" data-move="${id}" data-direction="-1" aria-label="Move album up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-move="${id}" data-direction="1" aria-label="Move album down" ${i === s.albumIds.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-remove-album="${id}" aria-label="Remove album">×</button></li>`).join('')}</ol></details></div>`;
-    if (tab === 'style') return `<h2>Make it yours</h2><div class="hub-fields">${field('photoSeconds', 'Seconds per photo', undefined, 3, 300)}${field('fit', 'Picture fit', [['contain', 'Show the whole picture'], ['cover', 'Fill the screen']])}</div><p class="hub-muted">Videos finish playing. Live Photos play, then stay for the full photo time.</p><div class="hub-fields">${field('motion', 'Photo motion', [['none', 'Still'], ['in', 'Slow zoom in'], ['out', 'Slow zoom out'], ['random', 'Random pan & zoom']])}${field('transition', 'Transition', [['fade', 'Fade'], ['slide', 'Slide'], ['cut', 'Instant'], ['random', 'Random']])}</div><details><summary>Motion & transition details</summary><div class="hub-fields">${field('zoomPercent', 'Zoom percent', undefined, 1, 20)}${field('transitionSeconds', 'Transition seconds', undefined, .2, 3, .1)}</div></details><div class="hub-divider"></div>${toggle('showLocation', 'Show location', 'Place names from your photos')}${toggle('showDate', 'Show date taken', 'Always MM.DD.YY')}<details><summary>Caption positions</summary><div class="hub-fields">${field('locationCorner', 'Location', corners)}${field('dateCorner', 'Date taken', corners)}</div></details><div class="hub-divider"></div>${field('progressStyle', 'Media countdown', [['off', 'Off'], ['bar', 'Edge bar'], ['ring', 'Circular countdown']])}<div data-dep="ring" ${s.progressStyle !== 'ring' ? 'hidden' : ''}>${field('progressCorner', 'Countdown corner', corners)}</div><div data-dep="bar" ${s.progressStyle !== 'bar' ? 'hidden' : ''}>${field('progressPosition', 'Countdown edge', [['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right']])}</div>`;
+    if (tab === 'style') return `<h2>Make it yours</h2><div class="hub-fields">${field('photoSeconds', 'Seconds per photo', undefined, 3, 300)}${field('fit', 'Picture fit', [['contain', 'Show the whole picture'], ['cover', 'Fill the screen']])}</div><p class="hub-muted">Videos finish playing. Live Photos play, then stay for the full photo time.</p><div class="hub-fields">${field('motion', 'Photo motion', [['none', 'Still'], ['in', 'Slow zoom in'], ['out', 'Slow zoom out'], ['random', 'Random pan & zoom']])}${field('transition', 'Transition', [['fade', 'Fade'], ['slide', 'Slide'], ['cut', 'Instant'], ['random', 'Random']])}</div><details><summary>Motion & transition details</summary><div class="hub-fields">${field('zoomPercent', 'Zoom percent', undefined, 1, 20)}${field('transitionSeconds', 'Transition seconds', undefined, .2, 3, .1)}</div></details><div class="hub-divider"></div>${toggle('showLocation', 'Show location', 'Place names from your photos')}${toggle('showDate', 'Show date taken', 'Always MM.DD.YY')}<details><summary>Caption positions</summary><div class="hub-fields">${field('locationCorner', 'Location', corners)}${field('dateCorner', 'Date taken', corners)}</div></details><div class="hub-divider"></div>${peopleEditor()}<div class="hub-divider"></div>${field('progressStyle', 'Media countdown', [['off', 'Off'], ['bar', 'Edge bar'], ['ring', 'Circular countdown']])}<div data-dep="ring" ${s.progressStyle !== 'ring' ? 'hidden' : ''}>${field('progressCorner', 'Countdown corner', corners)}</div><div data-dep="bar" ${s.progressStyle !== 'bar' ? 'hidden' : ''}>${field('progressPosition', 'Countdown edge', [['bottom', 'Bottom'], ['top', 'Top'], ['left', 'Left'], ['right', 'Right']])}</div>`;
     const item = record()!;
     if (tab === 'sleep') return `<h2>Sleep hours</h2><p class="hub-muted">Choose when the screen sleeps and wakes each day.</p><fieldset class="hub-sleep-controls" ${item.snapshot.display ? '' : 'disabled'}>${toggle('sleepEnabled', 'Sleep on a schedule', 'Turn off the screen during these hours')}<div class="hub-fields">${field('sleepStart', 'Sleep at')}${field('sleepEnd', 'Wake at')}</div></fieldset><p class="hub-muted" data-display-status>${e(displayMessage(item.snapshot.display))}</p><p class="hub-muted">The schedule stays on the Pi, so it still wakes when Hub is unavailable. Turn off the schedule to wake the screen early.</p>`;
     const agent = item.snapshot.update.agentSeenAt && Date.now() - Date.parse(item.snapshot.update.agentSeenAt) < 180_000;
@@ -115,10 +124,11 @@ export async function showHub(root: HTMLElement) {
     }
     if (selected && record() && !saves.has(selected) && !drafts.has(selected)) {
       const s = settings();
-      for (const input of root.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.hub-form [name]')) {
+      for (const input of root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('.hub-form [name]')) {
         if (input === document.activeElement) continue;
         const value = s[input.name as keyof FrameSettings];
         if (input instanceof HTMLInputElement && input.type === 'checkbox') input.checked = value as boolean;
+        else if (input.name === 'peopleNames') input.value = s.peopleNames.join('\n');
         else input.value = String(value);
       }
       for (const checkbox of root.querySelectorAll<HTMLInputElement>('[data-album]')) {
@@ -126,7 +136,7 @@ export async function showHub(root: HTMLElement) {
         checkbox.closest('.hub-album')?.classList.toggle('is-selected', checkbox.checked);
       }
       const selection = root.querySelector('.hub-selection'); if (selection) selection.textContent = `${s.albumIds.length} ${s.albumIds.length === 1 ? 'album' : 'albums'} selected`;
-      for (const [key, visible] of [['album-order', s.playbackMode === 'albums'], ['ring', s.progressStyle === 'ring'], ['bar', s.progressStyle === 'bar']] as const) {
+      for (const [key, visible] of [['album-order', s.playbackMode === 'albums'], ['ring', s.progressStyle === 'ring'], ['bar', s.progressStyle === 'bar'], ['people', s.showPeople]] as const) {
         const target = root.querySelector<HTMLElement>(`[data-dep="${key}"]`); if (target) target.hidden = !visible;
       }
       const updateStatus = root.querySelector('[data-update-status]');
@@ -254,7 +264,7 @@ export async function showHub(root: HTMLElement) {
     if (input.classList.contains('hub-search')) { query = input.value; root.querySelector('.hub-albums')!.innerHTML = albumList(); }
   });
   root.addEventListener('change', event => {
-    const input = event.target as HTMLInputElement | HTMLSelectElement;
+    const input = event.target as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
     if (input.id === 'hub-policy') {
       void api<HubState>('hub', { method: 'PATCH', body: JSON.stringify({ updatePolicy: input.value }) }).then(result => { state = result; notice('Update preference saved.'); }).catch(error => notice(error.message, true)); return;
     }
@@ -263,9 +273,9 @@ export async function showHub(root: HTMLElement) {
       save({ albumIds: (input as HTMLInputElement).checked ? [...ids, input.dataset.album] : ids.filter(id => id !== input.dataset.album) }); render(); return;
     }
     if (!input.closest('.hub-form') || !input.name || !input.reportValidity()) return;
-    const value = input instanceof HTMLInputElement && input.type === 'checkbox' ? input.checked : numbers.has(input.name) ? Number(input.value) : input.value;
+    const value = input.name === 'peopleNames' ? peopleNamesFromText(input.value) : input instanceof HTMLInputElement && input.type === 'checkbox' ? input.checked : numbers.has(input.name) ? Number(input.value) : input.value;
     save({ [input.name]: value });
-    if (['progressStyle', 'playbackMode'].includes(input.name)) render();
+    if (['progressStyle', 'playbackMode', 'showPeople'].includes(input.name)) render();
   });
   async function poll() {
     if (polling || stopped || document.hidden) return;

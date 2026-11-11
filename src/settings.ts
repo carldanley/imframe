@@ -1,5 +1,5 @@
 import { api, escapeHtml as e } from './api.js';
-import { defaults, type Album, type FrameSettings, type Status } from '../shared/model.js';
+import { defaults, peopleNamesFromText, type Album, type FrameSettings, type Status } from '../shared/model.js';
 import type { PlaybackHealthReport } from '../shared/playback-health.js';
 import type { SatelliteInfo } from '../shared/satellite.js';
 import { displayMessage } from '../shared/display.js';
@@ -50,6 +50,12 @@ export async function showSettings(root: HTMLElement) {
               <p class="hint">The capture date from Immich, always MM.DD.YY. Hidden when no date is available.</p>
             </div>
             <div class="location-settings">
+              <label class="toggle-field"><input type="checkbox" name="showPeople" /><span>Show people & ages</span></label>
+              <label class="field">People to show<textarea name="peopleNames" rows="3" placeholder="Alex&#10;Sam" aria-describedby="people-hint" spellcheck="false"></textarea></label>
+              <label class="field">People corner<select name="peopleCorner"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-left">Top left</option><option value="top-right">Top right</option></select></label>
+              <p class="hint" id="people-hint">One Immich name per line. Names must match in full; capitalization does not matter. Only these people appear, with their age when the photo or video was taken. People without birthdays stay hidden.</p>
+            </div>
+            <div class="location-settings">
               <div class="field-grid"><label class="field">Media countdown<select name="progressStyle"><option value="off">Off</option><option value="bar">Edge bar</option><option value="ring">Circular countdown</option></select></label>
                 <label class="field" id="countdown-edge-field">Countdown edge<select name="progressPosition"><option value="bottom">Bottom</option><option value="top">Top</option><option value="left">Left</option><option value="right">Right</option></select></label>
                 <label class="field" id="countdown-corner-field" hidden>Countdown corner<select name="progressCorner"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-left">Top left</option><option value="top-right">Top right</option></select></label></div>
@@ -93,11 +99,12 @@ export async function showSettings(root: HTMLElement) {
     notice.classList.toggle('error', error);
   }
   function markDirty() { dirty = true; saveStatus.textContent = 'You have unsaved changes.'; }
-  function field(name: keyof FrameSettings) { return form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement; }
+  function field(name: keyof FrameSettings) { return form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement; }
   function populate() {
     for (const [key, value] of Object.entries(settings)) {
       const input = form.elements.namedItem(key);
       if (input instanceof HTMLInputElement && input.type === 'checkbox') input.checked = Boolean(value);
+      else if (input instanceof HTMLTextAreaElement && key === 'peopleNames') input.value = settings.peopleNames.join('\n');
       else if (input instanceof HTMLInputElement || input instanceof HTMLSelectElement) input.value = String(value);
     }
     selected = [...settings.albumIds];
@@ -110,6 +117,7 @@ export async function showSettings(root: HTMLElement) {
     field('transitionSeconds').disabled = field('transition').value === 'cut';
     field('locationCorner').disabled = !(field('showLocation') as HTMLInputElement).checked;
     field('dateCorner').disabled = !(field('showDate') as HTMLInputElement).checked;
+    field('peopleCorner').disabled = !(field('showPeople') as HTMLInputElement).checked;
     const circular = field('progressStyle').value === 'ring';
     root.querySelector<HTMLElement>('#countdown-edge-field')!.hidden = circular;
     root.querySelector<HTMLElement>('#countdown-corner-field')!.hidden = !circular;
@@ -168,6 +176,7 @@ export async function showSettings(root: HTMLElement) {
     for (const [key, value] of Object.entries(settings)) {
       const input = form.elements.namedItem(key);
       if (input instanceof HTMLInputElement && input.type === 'checkbox') next[key] = input.checked;
+      else if (input instanceof HTMLTextAreaElement && key === 'peopleNames') next[key] = peopleNamesFromText(input.value);
       else if (input instanceof HTMLInputElement || input instanceof HTMLSelectElement) next[key] = typeof value === 'number' ? Number(input.value) : input.value;
     }
     try {

@@ -10,6 +10,10 @@ const asset = (n, type = 'IMAGE', live = false) => ({
   width: type === 'VIDEO' ? 640 : 3840, height: type === 'VIDEO' ? 360 : 2160,
   duration: type === 'VIDEO' ? 3000 : null, livePhotoVideoId: live ? id(9) : null,
   exifInfo: n === 5 ? null : { city: n === 4 ? 'Vancouver' : 'Juneau', state: n === 4 ? 'British Columbia' : 'Alaska', country: n === 4 ? 'Canada' : 'United States' },
+  people: n === 5 ? [] : [
+    { id: id(201), name: 'Alex', birthDate: '2020-06-10' },
+    ...(n === 1 || n === 4 ? [{ id: id(202), name: 'Sam', birthDate: '2025-08-01' }] : []),
+  ],
 });
 const albums = [
   { id: id(101), albumName: 'Demo · Everyday', assetCount: 3, albumThumbnailAssetId: id(1) },
