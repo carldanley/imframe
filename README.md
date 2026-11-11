@@ -60,7 +60,7 @@ For ages, enable **Style → Show people & ages** and enter one Immich name per 
 
 Choose **When I ask** or **Automatically, once a day** in Hub settings. Automatic updates run one frame at a time. Frames outside Hub check for updates themselves every 15 minutes.
 
-The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.4` for the `0.4.x` series, or `:0.4.0` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
+The container supports AMD64 and ARM64. Use `ghcr.io/carldanley/imframe:latest` for stable releases, `:0.5` for the `0.5.x` series, or `:0.5.0` to pin a version. Settings survive updates. [Update details](docs/setup.md#automatic-updates).
 
 ## Try it locally
 
